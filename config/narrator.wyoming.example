@@ -1,0 +1,77 @@
+# narrator.wyoming configuration — EXAMPLE.
+#
+# Copy this to `config/narrator.wyoming` (which is gitignored) and edit for your
+# network:
+#     cp config/narrator.wyoming.example config/narrator.wyoming
+#
+# Used in two places:
+#   - Host builds (wyomingtest / saytest): host, port, runs, text, voice.
+#   - On-target: the boot script copies it to ENV:narrator.wyoming, which
+#     narrator.device reads at runtime (nw_read_prefs) for host/port and the
+#     sex -> Piper-voice mapping. Nothing is baked into the binary.
+#
+# On the Amiga, ENV: is in RAM and rebuilt from ENVARC: at boot, so to keep your
+# settings across reboots save the file to BOTH, e.g.:
+#     Copy ENV:narrator.wyoming ENVARC:narrator.wyoming
+#
+# Format: "key value" per line; lines starting with # or ; are comments.
+
+# --- Piper Wyoming server (required) ---
+host 192.168.1.50          # <-- your Piper/Wyoming server IP or hostname
+port 10200                 # Wyoming Piper default
+
+# --- Voice mapping (optional) ---
+# Piper voice names; each MUST exist on your server (the names below are common
+# Piper voices, shown as examples). `sex` is set at runtime by the caller (e.g.
+# Say's -m / -f, via narrator_rb.sex); these keys only say which Piper voice
+# each sex maps to. Omit all three to use the server's default voice.
+#
+# NOTE: voice choice affects articulation. Say with no flag uses MALE (DEFSEX),
+# so voice_male is your everyday voice. Some voices clip final consonants on
+# short isolated words (e.g. en_US-ryan-high renders "test" as ~"tess"); pick a
+# clearly-articulating voice for voice_male. en_US-lessac-medium is a safe bet.
+voice         en_US-lessac-medium    # default / fallback voice
+voice_male    en_US-lessac-medium    # used when narrator_rb.sex == MALE (Say's default)
+voice_female  en_US-amy-medium       # used when narrator_rb.sex == FEMALE
+
+# --- AHI output unit (optional) ---
+# Which ahi.device unit to play through. Leave at 0 (AHI's default unit) unless
+# you have configured more than one AHI unit (different modes/cards in AHI prefs)
+# and want narrator to use a specific one. Changing it at runtime makes the
+# device reopen AHI on the new unit at the next CMD_WRITE.
+ahi_unit 0
+
+# --- Output level / headroom (optional) ---
+# AHI output level as a percent of full scale (1..100; default 80). Piper's PCM
+# peaks reach 0 dBFS, and AHI's resample to the Paula/output rate overshoots
+# those full-scale peaks, which clips and sounds harsh/distorted on loud
+# syllables. Keeping this below 100 leaves headroom so peaks don't hit the
+# ceiling. 80 is a good default; lower it (e.g. 70) if loud peaks still distort,
+# raise it toward 100 for maximum loudness if your output stays clean.
+gain 80
+
+# --- Sibilance / high-cut (optional) ---
+# AHI's resample to Paula's rate plus 8-bit Paula output turn the 8-11 kHz "s"
+# band harsh/sibilant on-target (the source PCM is clean — it's the playback
+# chain). `smooth` applies a gentle high-cut (a cascade of N (x+x_prev)/2
+# averagers) before handing PCM to AHI: a null at Nyquist, strong cut at 8 kHz,
+# near-untouched below ~3 kHz, so it tames the essiness while keeping speech
+# intelligible. 0 = off, 1 = gentle, 2 = stronger (default — validated to tame
+# the essiness without dulling speech). Raise it if "s" still hisses; drop it
+# (1, or 0 = off) if speech sounds muffled.
+smooth 2
+
+# --- Latency: split long input into pipelined chunks (optional) ---
+# Piper synthesizes one SENTENCE at a time, so a single long sentence has to be
+# fully rendered before any audio starts (e.g. ~2.3s for a 40-word run-on).
+# Multi-sentence text already starts fast. Set split_words > 0 to break the text
+# into chunks of about this many words (at sentence -> clause -> word
+# boundaries) and pipeline them, so the FIRST chunk starts in ~250ms; the rest
+# synthesize while it plays, so playback stays gapless. Small prosody cost at the
+# split points. 0 (or omitted) = off: send the whole text in one request (most
+# natural). A value around 12-20 is a good start.
+split_words 0
+
+# --- Host-build-only knobs (ignored by the device) ---
+runs 3                     # wyomingtest: repeat count
+text Hello from the Amiga. This is neural speech over Wyoming.
