@@ -32,7 +32,7 @@ jobs:
     name: Build archive + attach to GitHub Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Need history for auto-generated release notes between tags.
           fetch-depth: 0

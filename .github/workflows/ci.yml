@@ -37,7 +37,7 @@ jobs:
     name: Host build (cc, strict warnings)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: make host
         run: make host
       - name: smoke-run host binaries
@@ -51,7 +51,7 @@ jobs:
     name: Amiga cross-build + Aminet archive
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: make dist (pinned amiga-gcc image)
         run: make dist
       - name: Inspect archive
@@ -75,7 +75,7 @@ jobs:
     name: Semgrep (auto rules)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
