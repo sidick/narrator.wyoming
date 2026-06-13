@@ -63,7 +63,7 @@ jobs:
             stefanreinauer/amiga-gcc@sha256:68f3233fe3b270654b471e11e0b2e25fae0ac34350959b5be360c9af84ef388a \
             lha l build/NarratorWyomingDev.lha
       - name: Upload archive as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: NarratorWyomingDev-${{ github.sha }}
           path: |
