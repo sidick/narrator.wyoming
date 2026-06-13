@@ -101,7 +101,7 @@ DOCKER_RUN := docker run --rm -v "$(CURDIR)":/work -w /work $(IMAGE)
 all: host
 
 host:  $(BUILD)/host/wyomingtest  $(BUILD)/host/saytest
-amiga: $(BUILD)/amiga/wyomingtest $(BUILD)/amiga/saytest $(DEV_BIN) $(LIB_BIN) $(BUILD)/amiga/devtest
+amiga: $(BUILD)/amiga/wyomingtest $(BUILD)/amiga/saytest $(DEV_BIN) $(LIB_BIN) $(BUILD)/amiga/devtest $(BUILD)/amiga/failtest
 
 device: $(DEV_BIN)
 translator: $(LIB_BIN)
@@ -118,6 +118,13 @@ $(DEV_BIN): $(DEV_SRCS) $(HDRS)
 $(BUILD)/amiga/devtest: $(SRCDIR)/devtest.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/devtest.c
+
+# failtest: graceful-failure scenarios -- unreachable IP, DNS failure,
+# bad voice. Rewrites ENV:narrator.wyoming on the fly per scenario and
+# restores it at the end. clib2 (uses stdio for the env-file dance).
+$(BUILD)/amiga/failtest: $(SRCDIR)/failtest.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/failtest.c
 
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
