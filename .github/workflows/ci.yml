@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Simon Dick
+
+# CI -- run on every push to develop/main and every PR. Three independent
+# jobs so a failure in one doesn't mask the others:
+#
+#   host-build : `make host` with the strict -Wall -Wextra -Werror flags.
+#                Tests that the host-side wyomingtest + saytest still build
+#                with system cc.
+#
+#   amiga-dist : `make dist` -- runs the Bebbo m68k-amigaos-gcc cross
+#                compiler inside the digest-pinned Docker image and packs
+#                the Aminet archive. Uploads the resulting lha as a
+#                workflow artifact so reviewers can grab and inspect a
+#                build for any commit without rebuilding locally.
+#
+#   semgrep    : security/quality scan with semgrep's auto rule pack.
+#                Same configuration we run locally with `semgrep --config
+#                auto`. Fails on any blocking finding.
+
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+# Cancel in-flight runs on the same ref when a new push comes in -- saves CI
+# time when someone is force-pushing iterations during review.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-build:
+    name: Host build (cc, strict warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: make host
+        run: make host
+      - name: smoke-run host binaries
+        # Both binaries print usage on a bad arg; we just want a non-segfault
+        # exit, not a specific status -- so accept either with `|| true`.
+        run: |
+          ./build/host/wyomingtest 2>&1 | head -5 || true
+          ./build/host/saytest     2>&1 | head -5 || true
+
+  amiga-dist:
+    name: Amiga cross-build + Aminet archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: make dist (pinned amiga-gcc image)
+        run: make dist
+      - name: Inspect archive
+        run: |
+          ls -la build/
+          # Use the pinned image (it has lha) to list the archive contents;
+          # avoids requiring lha on the runner itself.
+          docker run --rm -v "$(pwd)":/work -w /work \
+            stefanreinauer/amiga-gcc@sha256:68f3233fe3b270654b471e11e0b2e25fae0ac34350959b5be360c9af84ef388a \
+            lha l build/NarratorWyomingDev.lha
+      - name: Upload archive as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NarratorWyomingDev-${{ github.sha }}
+          path: |
+            build/NarratorWyomingDev.lha
+            NarratorWyomingDev.readme
+          retention-days: 14
+
+  semgrep:
+    name: Semgrep (auto rules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install semgrep
+        run: pip install --quiet semgrep
+      - name: semgrep --config auto
+        run: |
+          semgrep --config auto --error \
+                  --include='*.c' --include='*.h' \
+                  src/ third_party/

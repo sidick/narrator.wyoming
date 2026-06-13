@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Simon Dick
+
+# Tag-driven release. The flow is:
+#
+#   1. Locally, `make release` tags v<VERSION>.<REVISION> at HEAD and builds
+#      the archive (see CLAUDE.md "Versioning").
+#   2. `git push --follow-tags` pushes both the commit and the tag.
+#   3. The tag push triggers this workflow.
+#   4. The workflow rebuilds the archive from scratch in CI (so the artifact
+#      attached to the GitHub Release is reproducible from public CI, not
+#      just from one developer's machine), then creates a GitHub Release
+#      with the lha + Aminet readme attached and auto-generated notes from
+#      the commits since the previous tag.
+#
+# Aminet upload is still manual -- Aminet has no API and the maintainers
+# gatekeep submissions. The GitHub Release is a second canonical source so
+# users can fetch the artifact even before Aminet processes the submission.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # required to create the release + attach artifacts
+
+jobs:
+  release:
+    name: Build archive + attach to GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need history for auto-generated release notes between tags.
+          fetch-depth: 0
+
+      - name: Build archive
+        run: make dist
+
+      - name: Sanity-check archive contents
+        run: |
+          docker run --rm -v "$(pwd)":/work -w /work \
+            stefanreinauer/amiga-gcc@sha256:68f3233fe3b270654b471e11e0b2e25fae0ac34350959b5be360c9af84ef388a \
+            lha l build/NarratorWyomingDev.lha
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # ${GITHUB_REF_NAME} is the tag (e.g. v44.0). Use it as both the
+          # title suffix and the release tag.
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "narrator.wyoming ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            build/NarratorWyomingDev.lha \
+            NarratorWyomingDev.readme

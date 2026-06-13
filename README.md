@@ -1,5 +1,7 @@
 # narrator.wyoming
 
+[![CI](https://github.com/sidick/narrator.wyoming/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/sidick/narrator.wyoming/actions/workflows/ci.yml)
+
 A drop-in replacement for the Amiga **`narrator.device`** that speaks with a
 modern **neural voice** instead of the old Paula formant synthesizer. It forwards
 text to a [Piper](https://github.com/rhasspy/piper) text-to-speech server over the
