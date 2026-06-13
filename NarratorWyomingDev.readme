@@ -1,0 +1,139 @@
+Short:        Neural speech narrator.device via Piper
+Uploader:     simond@irrelevant.org (Simon Dick)
+Author:       simond@irrelevant.org (Simon Dick)
+Type:         util/sys
+Version:      44.0
+Architecture: m68k-amigaos
+Distribution: Aminet
+
+narrator.wyoming
+================
+
+A drop-in replacement for the Amiga narrator.device that speaks with a
+modern neural voice instead of the old Paula formant synthesizer. Rather
+than running local formant synthesis, it forwards text to a Piper neural
+text-to-speech server over the Wyoming protocol (plain TCP) and plays the
+returned PCM audio through AHI.
+
+Because it replaces narrator.device by name in DEVS:, existing Amiga
+software gets neural speech transparently - the stock Say command, and any
+program that opens narrator.device, work with no modification.
+
+It ships as a pair:
+
+  * narrator.device    - the drop-in device (goes in DEVS:)
+  * translator.library - a pass-through translator so callers deliver plain
+                         English to the device (Piper wants English, not the
+                         classic ARPABET phonemes)
+
+Aimed at PiStorm / emu68k accelerated and other fast 68k Amigas, where the
+accelerated CPU makes the network round-trip practical. Developed and tested
+under the Amiberry emulator.
+
+
+REQUIREMENTS
+------------
+
+  * AHI v4 or later, with a Unit 0 audio mode configured (the paula.audio
+    driver is fine under emulation).
+  * A TCP/IP stack providing bsdsocket.library (Roadshow or AmiTCP).
+  * A fast 68k (PiStorm/emu68k, or roughly 68030/40MHz and up). No FPU
+    required.
+  * A Piper TTS server reachable on your LAN with the Wyoming protocol
+    enabled (default port 10200), e.g. the wyoming-piper add-on/container.
+  * No TLS / AmiSSL - Wyoming is plain TCP.
+
+
+INSTALLATION
+------------
+
+  Copy narrator.device     to DEVS:narrator.device
+  Copy translator.library  to LIBS:translator.library
+
+  Create the prefs file ENV:narrator.wyoming (and ENVARC: to persist it
+  across reboots) with at least your server address:
+
+      host 192.168.1.50
+      port 10200
+
+  Then use speech as normal, for example:
+
+      Say "Hello from the Amiga."
+
+
+CONFIGURATION (ENV:narrator.wyoming)
+------------------------------------
+
+  "key value" per line; # or ; start comments. All keys are optional
+  except host.
+
+    host          Piper/Wyoming server address        (default 127.0.0.1)
+    port          server port                         (default 10200)
+    voice         default Piper voice name             (server default)
+    voice_male    voice when the caller selects MALE   (Say's default sex)
+    voice_female  voice when the caller selects FEMALE
+    ahi_unit      ahi.device unit to play through      (default 0)
+    split_words   break long input into ~N-word
+                  pipelined chunks for a faster start  (0 = off)
+
+  Voice names must exist on your Piper server. Choose a clearly-articulating
+  voice for voice_male - it is the everyday voice, since Say defaults to the
+  MALE sex.
+
+
+COMPANION SOFTWARE
+------------------
+
+  Anything that speaks through narrator.device benefits from the neural
+  voice. A good companion is speak-handler by Alexander Fritsch (Aminet:
+  util/sys/speak-handler), a from-scratch native replacement for the
+  Commodore SPEAK: handler. Mount its SPEAK: and you can pipe text straight
+  to neural speech:
+
+      Type myfile.txt TO SPEAK:
+      echo "Hello from the Amiga" >SPEAK:
+
+
+NOTES / LIMITATIONS
+-------------------
+
+  * Latency: warm first-audio is around 0.4s on an emulated 68020 over a
+    local network. The first request after the server has been idle is
+    slower (~1.8s) while Piper loads the voice model; warm requests are
+    fast. split_words cuts the start delay on long sentences.
+
+  * rate and pitch from the IOSpeech request are accepted but ignored - the
+    Wyoming synthesize request has no per-request rate/pitch knob (those are
+    properties of the Piper voice, set server-side). volume and sex are
+    honoured (sex selects the configured voice).
+
+  * Direct ARPABET phoneme input (the classic narrator contract, bypassing
+    translator.library) is silently discarded - Piper takes text, not
+    phonemes. Normal English, including all-caps words, is always spoken.
+
+  * CMD_READ mouth-shapes and word/syllable sync are not implemented (Piper
+    returns no phoneme timing). CMD_READ returns ND_NoWrite, so talking-head
+    software gets no animation but does not hang.
+
+
+DEVELOPMENT
+-----------
+
+  This project was developed with the assistance of AI tooling (Anthropic's
+  Claude, via Claude Code), under human direction and tested on-target.
+
+
+SOURCE
+------
+
+  Full source, build instructions and design notes:
+
+      https://github.com/sidick/narrator.wyoming
+
+  Built with the Bebbo m68k-amigaos GCC cross-toolchain.
+
+
+LICENSE
+-------
+
+  MIT - see the LICENSE file in the source repository.

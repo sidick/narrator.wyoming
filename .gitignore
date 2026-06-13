@@ -1,0 +1,76 @@
+# Local planning notes (not committed)
+docs/PLAN.md
+
+# Build output
+/build/
+
+# On-target run output (written by the boot script under Amiberry)
+/wyomingtest.log
+/saytest.log
+/devtest.log
+/version.log
+
+# Host audio output
+/say.wav
+*.wav
+
+# Local, machine-specific config (server address etc.); the committed
+# config/narrator.wyoming.example is the template.
+/config/narrator.wyoming
+
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# debug information files
+*.dwo
+/test-install/

@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Simon Dick
+
+name: Feature request
+description: Suggest an enhancement -- a prefs knob, a Wyoming event we don't handle, a new caller-side integration, etc.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. The fields below help separate the
+        "what" from the "why" so we can talk about the problem before
+        the solution.
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What are you trying to accomplish that the current device doesn't let you do? Concrete example beats abstract description.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: How you'd like it to work. A prefs key, a new IOSpeech field, a different default -- whatever fits.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Existing workarounds, related Aminet utilities, similar features in other narrator replacements, etc.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This stays inside the "drop-in narrator.device + pass-through translator.library" envelope (i.e. existing callers like `Say` should still benefit without modification).
+        - label: I've read the README's "Limitations / future work" section.

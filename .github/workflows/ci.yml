@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Simon Dick
+
+# CI -- run on every push to main and every PR targeting main. Three
+# independent jobs so a failure in one doesn't mask the others:
+#
+#   host-build : `make host` with the strict -Wall -Wextra -Werror flags.
+#                Tests that the host-side wyomingtest + saytest still build
+#                with system cc.
+#
+#   amiga-dist : `make dist` -- runs the Bebbo m68k-amigaos-gcc cross
+#                compiler inside the digest-pinned Docker image and packs
+#                the Aminet archive. Uploads the resulting lha as a
+#                workflow artifact so reviewers can grab and inspect a
+#                build for any commit without rebuilding locally.
+#
+#   semgrep    : security/quality scan with semgrep's auto rule pack.
+#                Same configuration we run locally with `semgrep --config
+#                auto`. Fails on any blocking finding.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs on the same ref when a new push comes in -- saves CI
+# time when someone is force-pushing iterations during review.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-build:
+    name: Host build (cc, strict warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: make host
+        run: make host
+      - name: smoke-run host binaries
+        # Both binaries print usage on a bad arg; we just want a non-segfault
+        # exit, not a specific status -- so accept either with `|| true`.
+        run: |
+          ./build/host/wyomingtest 2>&1 | head -5 || true
+          ./build/host/saytest     2>&1 | head -5 || true
+
+  amiga-dist:
+    name: Amiga cross-build + Aminet archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Derive the image ref from the Makefile so the cache key tracks the
+      # pinned digest automatically -- when `make refresh-codesets`-style
+      # maintenance bumps IMAGE in the Makefile, the cache key changes,
+      # the old tarball is dropped, and the next run pulls + caches the
+      # new image. No manual cache invalidation needed.
+      - name: Resolve pinned amiga-gcc image ref
+        id: img
+        run: |
+          REF=$(grep '^IMAGE ' Makefile \
+                  | sed -E 's/^[^=]+= *//; s/[[:space:]]+$//')
+          KEY=$(echo "$REF" | tr ':/@' '___')
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Using image ref: $REF"
+
+      # Cache the docker save tarball. ~500 MB; cache hits skip the pull
+      # entirely (saves ~30-60 s per workflow). Miss -> pull + save.
+      - name: Cache amiga-gcc Docker image
+        id: docker-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/amiga-gcc.tar
+          key: amiga-gcc-${{ steps.img.outputs.key }}
+
+      - name: Load cached image
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: docker load < /tmp/amiga-gcc.tar
+
+      - name: Pull + save image
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull "${{ steps.img.outputs.ref }}"
+          docker save "${{ steps.img.outputs.ref }}" > /tmp/amiga-gcc.tar
+
+      - name: make dist (pinned amiga-gcc image)
+        run: make dist
+
+      - name: Inspect archive
+        run: |
+          ls -la build/
+          # Use the pinned image (it has lha) to list the archive contents;
+          # avoids requiring lha on the runner itself.
+          docker run --rm -v "$(pwd)":/work -w /work \
+            "${{ steps.img.outputs.ref }}" \
+            lha l build/NarratorWyomingDev.lha
+
+      - name: Upload archive as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: NarratorWyomingDev-${{ github.sha }}
+          path: |
+            build/NarratorWyomingDev.lha
+            NarratorWyomingDev.readme
+          retention-days: 14
+
+  semgrep:
+    name: Semgrep (auto rules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      # Cache the pip wheel for semgrep so subsequent runs skip the ~10 MB
+      # download. Keyed on this workflow file's hash so any change to how
+      # we invoke semgrep busts the cache -- in practice that means bumping
+      # the pinned semgrep version invalidates it automatically.
+      - name: Cache pip wheels
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-semgrep-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            pip-semgrep-${{ runner.os }}-
+
+      - name: Install semgrep
+        run: pip install --quiet semgrep
+
+      - name: semgrep --config auto
+        run: |
+          semgrep --config auto --error \
+                  --include='*.c' --include='*.h' \
+                  src/ third_party/

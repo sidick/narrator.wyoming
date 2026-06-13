@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Simon Dick
+
+# Disable the "Open a blank issue" link so every new issue uses one of the
+# structured templates above. Point would-be supporters at the docs first.
+blank_issues_enabled: false
+
+contact_links:
+  - name: README + troubleshooting
+    url: https://github.com/sidick/narrator.wyoming#readme
+    about: Setup, prefs, Docker/Piper server, and a TROUBLESHOOTING section that covers the common "clipped consonants / harsh peaks / sibilance / long-sentence latency / hang" symptoms before you file an issue.
+
+  - name: Aminet readme
+    url: https://github.com/sidick/narrator.wyoming/blob/main/NarratorWyomingDev.readme
+    about: Short summary, requirements, install steps, configuration reference.

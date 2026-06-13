@@ -1,0 +1,19 @@
+; narrator.wyoming installer -- run from the unpacked drawer with:
+;     Execute Install
+;
+; Copies the drop-in device + library into place and seeds the prefs file.
+
+Echo "Installing narrator.wyoming ..."
+
+Copy >NIL: narrator.device     DEVS:narrator.device
+Copy >NIL: translator.library  LIBS:translator.library
+
+If NOT EXISTS ENVARC:narrator.wyoming
+  Copy >NIL: narrator.wyoming.example ENVARC:narrator.wyoming
+  Echo "Seeded ENVARC:narrator.wyoming from the example."
+EndIf
+Copy >NIL: ENVARC:narrator.wyoming ENV:narrator.wyoming
+
+Echo "narrator.wyoming installed."
+Echo "Edit ENV:narrator.wyoming (and ENVARC:) to set 'host' to your Piper server,"
+Echo "then try:  Say *"Hello from the Amiga.*""
