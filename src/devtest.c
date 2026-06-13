@@ -37,6 +37,7 @@
 #include <exec/types.h>
 #include <exec/io.h>
 #include <exec/errors.h>
+#include <exec/memory.h>
 #include <exec/tasks.h>
 #include <devices/narrator.h>
 #include <proto/exec.h>
@@ -214,6 +215,70 @@ static void phase_quoted_split(struct narrator_rb *io)
     fflush(stdout);
 }
 
+/* Phase 6: Resource-leak audit -- 100 Open/Close cycles, no CMD_WRITE in
+ * between. Each cycle creates and tears down a device task, opens and closes
+ * bsdsocket.library + codesets.library (when present), allocates and frees
+ * struct NW, allocates and frees two signal bits. A leak in any of those
+ * paths accumulates over 100 cycles and shows as a negative AvailMem delta.
+ *
+ * "Delta = 0" is the ideal; tiny noise (a few hundred bytes from interrupt
+ * activity or the system reclaiming memory) is normal. Single-digit-KB
+ * deltas warrant investigation; >10 KB is almost certainly a leak. */
+static void phase_leak_open_close(struct narrator_rb *io)
+{
+    const int N = 100;
+    ULONG before, after;
+    int   i, ok = 0;
+
+    before = AvailMem(MEMF_ANY);
+    for (i = 0; i < N; i++) {
+        BYTE err = OpenDevice((STRPTR)"narrator.device", 0,
+                              (struct IORequest *)io, 0);
+        if (err == 0) {
+            CloseDevice((struct IORequest *)io);
+            ok++;
+        }
+    }
+    after = AvailMem(MEMF_ANY);
+
+    printf("Phase 6 leak audit (Open/Close x %d): %d ok  AvailMem delta = %ld bytes\n",
+           N, ok, (long)before - (long)after);
+    fflush(stdout);
+}
+
+/* Phase 7: Resource-leak audit -- 10 Open + CMD_WRITE + Close cycles. Each
+ * exercises the full per-write allocation path on a fresh session: bsdsocket
+ * connect, Wyoming request buffer alloc/free, PCM streaming, AHI open/close.
+ * A per-write leak would accumulate ~10x its size; the per-session
+ * allocations get one more sweep here on top of phase 6. */
+static void phase_leak_write_cycle(struct narrator_rb *io)
+{
+    const int N = 10;
+    char *t = "Quick.";
+    ULONG before, after;
+    int   i, ok = 0;
+
+    before = AvailMem(MEMF_ANY);
+    for (i = 0; i < N; i++) {
+        BYTE err = OpenDevice((STRPTR)"narrator.device", 0,
+                              (struct IORequest *)io, 0);
+        if (err == 0) {
+            io->volume              = MAXVOL;
+            io->message.io_Command  = CMD_WRITE;
+            io->message.io_Data     = (APTR)t;
+            io->message.io_Length   = strlen(t);
+            DoIO((struct IORequest *)io);
+            CloseDevice((struct IORequest *)io);
+            ok++;
+        }
+    }
+    after = AvailMem(MEMF_ANY);
+
+    printf("Phase 7 leak audit (Open+CMD_WRITE+Close x %d): %d ok  AvailMem delta = %ld bytes\n",
+           N, ok, (long)before - (long)after);
+    fflush(stdout);
+}
+
 int main(void)
 {
     struct MsgPort     *mp;
@@ -256,6 +321,10 @@ int main(void)
         CloseDevice((struct IORequest *)io);
         printf("CloseDevice ok\n");
     }
+
+    /* --- Phases 6,7: leak audit (own opens; device must be closed first) --- */
+    phase_leak_open_close(io);
+    phase_leak_write_cycle(io);
 
     DeleteIORequest((struct IORequest *)io);
     DeleteMsgPort(mp);
