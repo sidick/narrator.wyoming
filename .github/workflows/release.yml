@@ -44,7 +44,28 @@ jobs:
         run: |
           docker run --rm -v "$(pwd)":/work -w /work \
             stefanreinauer/amiga-gcc@sha256:68f3233fe3b270654b471e11e0b2e25fae0ac34350959b5be360c9af84ef388a \
-            lha l build/NarratorWyomingDev.lha
+            lha l build/NarratorWyomingDevice.lha
+
+      # Two different naming conventions for the two distribution channels:
+      #
+      #   Aminet  uses the unversioned name (NarratorWyomingDevice.lha) -- the
+      #           uploaded .readme's "Version:" field plus Aminet's own slot
+      #           encode the version. `make dist` already produces these.
+      #
+      #   GitHub  Releases embed the version in the release URL, but the
+      #           file travels outside that context once downloaded -- so
+      #           name the asset NarratorWyomingDevice-44.0.lha (and matching
+      #           readme) for clarity in downloads folders, comparisons,
+      #           and bug reports. Stage versioned copies here and attach
+      #           those.
+      #
+      # ${GITHUB_REF_NAME#v} strips the leading "v" from the tag so the
+      # version in the filename matches the readme's "Version:" line.
+      - name: Stage versioned copies for the GitHub Release
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          cp build/NarratorWyomingDevice.lha "build/NarratorWyomingDevice-${V}.lha"
+          cp NarratorWyomingDevice.readme    "build/NarratorWyomingDevice-${V}.readme"
 
       - name: Create GitHub Release
         env:
@@ -52,8 +73,9 @@ jobs:
         run: |
           # ${GITHUB_REF_NAME} is the tag (e.g. v44.0). Use it as both the
           # title suffix and the release tag.
+          V="${GITHUB_REF_NAME#v}"
           gh release create "${GITHUB_REF_NAME}" \
             --title "narrator.wyoming ${GITHUB_REF_NAME}" \
             --generate-notes \
-            build/NarratorWyomingDev.lha \
-            NarratorWyomingDev.readme
+            "build/NarratorWyomingDevice-${V}.lha" \
+            "build/NarratorWyomingDevice-${V}.readme"

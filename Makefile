@@ -80,7 +80,7 @@ VERDATE := $(shell date '+%d.%m.%Y')
 VERDEF  := -DNW_VERSION=$(VERSION) -DNW_REVISION=$(REVISION) -DNW_BUILD_DATE='"($(VERDATE))"'
 
 # --- Aminet distribution archive ---
-DISTNAME  := NarratorWyomingDev
+DISTNAME  := NarratorWyomingDevice
 DISTSTAGE := $(BUILD)/dist/$(DISTNAME)
 DISTLHA   := $(BUILD)/$(DISTNAME).lha
 
@@ -149,27 +149,27 @@ docker:
 	$(DOCKER_RUN) make amiga
 
 # Build the uploadable Aminet archive. Runs in the container because it has both
-# the cross-compiler AND LhA; the result (build/NarratorWyomingDev.lha) plus the
-# repo's NarratorWyomingDev.readme are what you upload to Aminet.
+# the cross-compiler AND LhA; the result (build/NarratorWyomingDevice.lha) plus the
+# repo's NarratorWyomingDevice.readme are what you upload to Aminet.
 dist:
 	$(DOCKER_RUN) make dist-pack
 
 # Stage the drop-in pair + docs + installer and pack them. The archive holds a
-# single NarratorWyomingDev/ drawer. (Container-only: builds the Amiga binaries.)
-dist-pack: $(DEV_BIN) $(LIB_BIN) NarratorWyomingDev.readme docs/README.txt dist/Install dist/Install.info LICENSE config/narrator.wyoming.example
+# single NarratorWyomingDevice/ drawer. (Container-only: builds the Amiga binaries.)
+dist-pack: $(DEV_BIN) $(LIB_BIN) NarratorWyomingDevice.readme docs/README.txt dist/Install dist/Install.info LICENSE config/narrator.wyoming.example
 	rm -rf $(BUILD)/dist $(DISTLHA)
 	mkdir -p $(DISTSTAGE)
 	cp $(DEV_BIN)                      $(DISTSTAGE)/narrator.device
 	cp $(LIB_BIN)                      $(DISTSTAGE)/translator.library
-	cp NarratorWyomingDev.readme         $(DISTSTAGE)/NarratorWyomingDev.readme
-	sed -i.bak "s/^Version:.*/Version:      $(VERSION).$(REVISION)/" $(DISTSTAGE)/NarratorWyomingDev.readme && rm -f $(DISTSTAGE)/NarratorWyomingDev.readme.bak
+	cp NarratorWyomingDevice.readme         $(DISTSTAGE)/NarratorWyomingDevice.readme
+	sed -i.bak "s/^Version:.*/Version:      $(VERSION).$(REVISION)/" $(DISTSTAGE)/NarratorWyomingDevice.readme && rm -f $(DISTSTAGE)/NarratorWyomingDevice.readme.bak
 	cp docs/README.txt                 $(DISTSTAGE)/README.txt
 	cp config/narrator.wyoming.example $(DISTSTAGE)/narrator.wyoming.example
 	cp dist/Install                    $(DISTSTAGE)/Install
 	cp dist/Install.info               $(DISTSTAGE)/Install.info
 	cp LICENSE                         $(DISTSTAGE)/LICENSE
 	cd $(BUILD)/dist && lha a ../$(DISTNAME).lha $(DISTNAME)
-	@echo "Created $(DISTLHA) (upload it + NarratorWyomingDev.readme to Aminet)"
+	@echo "Created $(DISTLHA) (upload it + NarratorWyomingDevice.readme to Aminet)"
 
 # Print the current version.
 version:
@@ -178,8 +178,8 @@ version:
 # Sync the Aminet readme's Version: field to the current version.mk value (the
 # committed readme is uploaded standalone, so it must match the binaries).
 readme-version:
-	@sed -i.bak "s/^Version:.*/Version:      $(VERSION).$(REVISION)/" NarratorWyomingDev.readme && rm -f NarratorWyomingDev.readme.bak
-	@echo "NarratorWyomingDev.readme Version: $(VERSION).$(REVISION)"
+	@sed -i.bak "s/^Version:.*/Version:      $(VERSION).$(REVISION)/" NarratorWyomingDevice.readme && rm -f NarratorWyomingDevice.readme.bak
+	@echo "NarratorWyomingDevice.readme Version: $(VERSION).$(REVISION)"
 
 # Bump the REVISION in version.mk (44.0 -> 44.1) and sync the readme. This is a
 # POST-release step: run it AFTER `make release` to open the next test cycle, so
@@ -200,8 +200,8 @@ bump:
 release:
 	@$(MAKE) --no-print-directory readme-version
 	$(MAKE) clean dist
-	@if ! git diff --quiet HEAD -- NarratorWyomingDev.readme; then \
-	   git add NarratorWyomingDev.readme; \
+	@if ! git diff --quiet HEAD -- NarratorWyomingDevice.readme; then \
+	   git add NarratorWyomingDevice.readme; \
 	   git commit -m "Sync readme to $(VERSION).$(REVISION)"; \
 	 fi
 	@git tag -a v$(VERSION).$(REVISION) -m "narrator.wyoming $(VERSION).$(REVISION)"; \
