@@ -99,6 +99,19 @@ jobs:
             "${{ steps.img.outputs.ref }}" \
             lha l build/NarratorWyomingDevice.lha
 
+      # Aminet readme + archive structure validation. Run the Aminet release
+      # action in validate-only mode (no FTP upload, no release-asset
+      # attachment) -- catches readme format drift (mismatched Type:,
+      # missing fields, malformed headers) on every PR, rather than at
+      # manual upload time when the regression is already in main.
+      - name: Validate Aminet package (readme + structure)
+        uses: sidick/aminet-release-action@v1
+        with:
+          filename: build/NarratorWyomingDevice.lha
+          readme: NarratorWyomingDevice.readme
+          category: util/sys
+          validate-only: true
+
       - name: Upload archive as artifact
         uses: actions/upload-artifact@v7
         with:
