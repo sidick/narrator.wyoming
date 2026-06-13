@@ -97,15 +97,15 @@ jobs:
           # avoids requiring lha on the runner itself.
           docker run --rm -v "$(pwd)":/work -w /work \
             "${{ steps.img.outputs.ref }}" \
-            lha l build/NarratorWyomingDev.lha
+            lha l build/NarratorWyomingDevice.lha
 
       - name: Upload archive as artifact
         uses: actions/upload-artifact@v7
         with:
-          name: NarratorWyomingDev-${{ github.sha }}
+          name: NarratorWyomingDevice-${{ github.sha }}
           path: |
-            build/NarratorWyomingDev.lha
-            NarratorWyomingDev.readme
+            build/NarratorWyomingDevice.lha
+            NarratorWyomingDevice.readme
           retention-days: 14
 
   semgrep:
