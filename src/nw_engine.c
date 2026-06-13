@@ -682,10 +682,10 @@ static int is_valid_utf8(const unsigned char *t, long len)
 }
 
 /* If `text` is already valid UTF-8 (or codesets isn't available), return 0
- * and leave *out/*outlen alone (caller uses the original text). Otherwise
- * transcode from ISO-8859-1 to UTF-8 into a freshly-allocated buffer, set
- * *out + *outlen, and return 1. Caller must release with
- * nw_release_transcoded(s, *out). */
+ * and leave *out and *outlen alone (caller uses the original text).
+ * Otherwise transcode from ISO-8859-1 to UTF-8 into a freshly-allocated
+ * buffer, set *out + *outlen, and return 1. Caller must release the buffer
+ * with nw_release_transcoded(s, *out). */
 static int nw_transcode_to_utf8(struct NW *s, const char *text, long len,
                                 const char **out, long *outlen)
 {

@@ -29,7 +29,7 @@ PROTO  := $(SRCDIR)/wyoming.c
 
 # --- Host toolchain ---
 HOST_CC     ?= cc
-HOST_CFLAGS ?= -O2 -Wall -Wextra -DPLATFORM_POSIX
+HOST_CFLAGS ?= -O2 -Wall -Wextra -Werror -DPLATFORM_POSIX
 HOST_NET    := $(SRCDIR)/net_posix.c
 HOST_AUDIO  := $(SRCDIR)/audio_host.c
 
@@ -43,7 +43,7 @@ CC          := m68k-amigaos-gcc
 # MicroPython Amiga port links against).
 # -msoft-float: the target 68020 has no (working) FPU; hardware float opcodes
 # trap as Guru #8000000B (F-line). Keep all float in software.
-CFLAGS      ?= -O2 -Wall -m68020 -msoft-float -mcrt=clib2 -DPLATFORM_AMIGA
+CFLAGS      ?= -O2 -Wall -Wextra -Werror -m68020 -msoft-float -mcrt=clib2 -DPLATFORM_AMIGA
 AMIGA_NET   := $(SRCDIR)/net_amiga.c
 AMIGA_AUDIO := $(SRCDIR)/audio_ahi.c
 
@@ -54,7 +54,7 @@ DEVINIT     ?= /opt/amiga/m68k-amigaos/libnix/lib/devinit.o
 # for the -nostdlib device: 020 has inline 32-bit muls.l/divs.l, so runtime
 # 32-bit *//* don't become libgcc __mulsi3/__divsi3 calls we can't link.
 # -msoft-float: keep FPU opcodes out (they trap as F-line on this config).
-DEV_CFLAGS  ?= -nostdlib -O3 -fomit-frame-pointer -fbaserel -m68020 -msoft-float -DPLATFORM_AMIGA
+DEV_CFLAGS  ?= -nostdlib -O3 -Wall -Wextra -Werror -fomit-frame-pointer -fbaserel -m68020 -msoft-float -DPLATFORM_AMIGA
 # Vendored upstream codesets.library headers (third_party/codesets/include).
 # The Bebbo NDK does not include them; we vendor jens-maus/libcodesets's so
 # the engine can speak the library's published ABI rather than re-derive it.
@@ -67,7 +67,7 @@ DEV_BIN     := $(BUILD)/amiga/narrator.device
 
 # Pass-through translator.library (libnix libinit.o; -fbaserel, no globals).
 LIBINIT     ?= /opt/amiga/m68k-amigaos/libnix/lib/libinit.o
-LIB_CFLAGS  ?= -nostdlib -O3 -fomit-frame-pointer -fbaserel -m68020 -msoft-float
+LIB_CFLAGS  ?= -nostdlib -O3 -Wall -Wextra -Werror -fomit-frame-pointer -fbaserel -m68020 -msoft-float
 LIB_BIN     := $(BUILD)/amiga/translator.library
 
 HDRS := $(wildcard $(SRCDIR)/*.h)
