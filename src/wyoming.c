@@ -9,6 +9,29 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
+
+/* Append printf-formatted text to buf at *pos, growing *pos by the bytes
+ * written. Returns 0 on success, -1 on truncation or error. snprintf returns
+ * "the number of bytes that would be written" (excluding NUL), which can
+ * exceed the buffer space -- adding that directly to a running offset risks
+ * the next sizeof(buf) - pos underflowing to a huge size_t. This helper
+ * pulls all of that bookkeeping into one place so callers can compose JSON
+ * without arithmetic landmines. */
+static int buf_appendf(char *buf, size_t buflen, size_t *pos,
+                       const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+    if (*pos >= buflen) return -1;
+    va_start(ap, fmt);
+    n = vsnprintf(buf + *pos, buflen - *pos, fmt, ap);
+    va_end(ap);
+    if (n < 0) return -1;
+    if ((size_t)n >= buflen - *pos) return -1;        /* truncated */
+    *pos += (size_t)n;
+    return 0;
+}
 
 /* ---- tiny, allocation-free helpers over a single JSON header line ---- *
  * These are intentionally minimal: they scan for "key" and read the value
@@ -74,7 +97,7 @@ static void json_escape(const char *in, char *out, size_t outlen)
             out[o++] = '\\'; out[o++] = 't';
         } else if (c < 0x20) {
             if (o + 6 >= outlen) break;
-            o += (size_t)snprintf(out + o, outlen - o, "\\u%04x", c);
+            if (buf_appendf(out, outlen, &o, "\\u%04x", c) < 0) break;
         } else {
             out[o++] = (char)c;
         }
@@ -115,29 +138,34 @@ int wyo_send_synthesize(int sock, const char *text,
         char escv[256];
         char escl[64];
         size_t o = 0;
-        o += (size_t)snprintf(vbuf + o, sizeof(vbuf) - o, ", \"voice\": {");
+        if (buf_appendf(vbuf, sizeof(vbuf), &o, ", \"voice\": {") < 0)
+            return -1;
         {
             int first = 1;
             if (voice && *voice) {
                 json_escape(voice, escv, sizeof(escv));
-                o += (size_t)snprintf(vbuf + o, sizeof(vbuf) - o,
-                                      "\"name\": \"%s\"", escv);
+                if (buf_appendf(vbuf, sizeof(vbuf), &o,
+                                "\"name\": \"%s\"", escv) < 0)
+                    return -1;
                 first = 0;
             }
             if (language && *language) {
                 json_escape(language, escl, sizeof(escl));
-                o += (size_t)snprintf(vbuf + o, sizeof(vbuf) - o,
-                                      "%s\"language\": \"%s\"",
-                                      first ? "" : ", ", escl);
+                if (buf_appendf(vbuf, sizeof(vbuf), &o,
+                                "%s\"language\": \"%s\"",
+                                first ? "" : ", ", escl) < 0)
+                    return -1;
                 first = 0;
             }
             if (speaker && *speaker) {
-                o += (size_t)snprintf(vbuf + o, sizeof(vbuf) - o,
-                                      "%s\"speaker\": %s",
-                                      first ? "" : ", ", speaker);
+                if (buf_appendf(vbuf, sizeof(vbuf), &o,
+                                "%s\"speaker\": %s",
+                                first ? "" : ", ", speaker) < 0)
+                    return -1;
             }
         }
-        snprintf(vbuf + o, sizeof(vbuf) - o, "}");
+        if (buf_appendf(vbuf, sizeof(vbuf), &o, "}") < 0)
+            return -1;
         n = snprintf(line, sizeof(line),
                      "{\"type\": \"synthesize\", \"data\": {\"text\": \"%s\"%s}}\n",
                      esc, vbuf);
