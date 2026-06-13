@@ -215,21 +215,36 @@ static void phase_quoted_split(struct narrator_rb *io)
     fflush(stdout);
 }
 
+/* flush_mem(): equivalent of CLI `Avail FLUSH`. AllocMem(~0UL, ...) always
+ * fails (no Amiga has 4 GB of free RAM), but on its way to failure exec
+ * walks every loaded library with LIBF_DELEXP + refcount 0 and calls its
+ * Expunge() vector. We bracket each AvailMem reading with a flush so
+ * "before" and "after" are taken in the same maximally-collected state --
+ * otherwise codesets.library / bsdsocket.library staying loaded across
+ * cycles would skew the delta. */
+static void flush_mem(void)
+{
+    APTR dummy = AllocMem(~0UL, MEMF_ANY);
+    (void)dummy;       /* always NULL on every real machine; nothing to free */
+}
+
 /* Phase 6: Resource-leak audit -- 100 Open/Close cycles, no CMD_WRITE in
  * between. Each cycle creates and tears down a device task, opens and closes
  * bsdsocket.library + codesets.library (when present), allocates and frees
  * struct NW, allocates and frees two signal bits. A leak in any of those
- * paths accumulates over 100 cycles and shows as a negative AvailMem delta.
+ * paths accumulates over 100 cycles and shows as a non-zero AvailMem delta.
  *
- * "Delta = 0" is the ideal; tiny noise (a few hundred bytes from interrupt
- * activity or the system reclaiming memory) is normal. Single-digit-KB
- * deltas warrant investigation; >10 KB is almost certainly a leak. */
+ * Both snapshots are taken after a flush_mem() so DELEXP-pending libraries
+ * have been swept. "Delta = 0" is the ideal; a few hundred bytes from
+ * interrupt activity is noise. Single-digit-KB deltas warrant investigation;
+ * >10 KB is almost certainly a leak. */
 static void phase_leak_open_close(struct narrator_rb *io)
 {
     const int N = 100;
     ULONG before, after;
     int   i, ok = 0;
 
+    flush_mem();
     before = AvailMem(MEMF_ANY);
     for (i = 0; i < N; i++) {
         BYTE err = OpenDevice((STRPTR)"narrator.device", 0,
@@ -239,6 +254,7 @@ static void phase_leak_open_close(struct narrator_rb *io)
             ok++;
         }
     }
+    flush_mem();
     after = AvailMem(MEMF_ANY);
 
     printf("Phase 6 leak audit (Open/Close x %d): %d ok  AvailMem delta = %ld bytes\n",
@@ -258,6 +274,7 @@ static void phase_leak_write_cycle(struct narrator_rb *io)
     ULONG before, after;
     int   i, ok = 0;
 
+    flush_mem();
     before = AvailMem(MEMF_ANY);
     for (i = 0; i < N; i++) {
         BYTE err = OpenDevice((STRPTR)"narrator.device", 0,
@@ -272,6 +289,7 @@ static void phase_leak_write_cycle(struct narrator_rb *io)
             ok++;
         }
     }
+    flush_mem();
     after = AvailMem(MEMF_ANY);
 
     printf("Phase 7 leak audit (Open+CMD_WRITE+Close x %d): %d ok  AvailMem delta = %ld bytes\n",
