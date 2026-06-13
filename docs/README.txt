@@ -189,7 +189,18 @@ Notes on individual keys:
       playback of the first chunk starts in about 0.25s while the server
       renders the rest.  Splits happen ONLY at punctuation (full stops
       always; commas / semicolons / colons once a chunk passes the word
-      target), so seams hide in the natural pauses Piper already inserts.
+      target), so seams land in the natural pauses Piper already inserts.
+
+      CAVEAT: AHI's read-ahead is only two buffers (about 370 ms total at
+      22050 Hz / 16-bit / mono).  If per-chunk Piper synthesis + network
+      transfer takes longer than the lookahead drains, you'll hear a
+      brief stutter or click at the chunk seam.  Under Amiberry's
+      bsdsocket emulation this is observable on smaller chunk sizes; on
+      real hardware with PiStorm and a TCP stack like Roadshow the
+      headroom is larger.  If you hear boundary artefacts, raise the
+      word target (fewer, longer chunks) or drop back to 0 (one
+      request, slower start, but no seams).
+
       0 (or omitted) = off: send the whole text in one request (most
       natural prosody).
 

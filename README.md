@@ -260,9 +260,20 @@ word count (e.g. `12`) to break long input into smaller chunks that are sent
 **pipelined** on the one connection — playback of the first chunk starts in
 ~¼s while the server renders the rest. Splits happen **only at punctuation**
 (full stops always; commas/semicolons once a chunk passes the word target), so
-the joins land in the natural pauses Piper already inserts and stay inaudible. A
-genuinely unpunctuated run-on won't split (it stays one request — slower start,
-but never a mid-phrase gap). Leave it at `0` for the most faithful prosody.
+the joins land in the natural pauses Piper already inserts.
+
+> **Caveat — chunk-boundary glitches.** AHI's read-ahead is only two buffers
+> (~370 ms total at 22050 Hz/16-bit/mono). If per-chunk Piper synthesis +
+> network transfer ever takes longer than the lookahead drains, you'll hear
+> a brief stutter or click at the chunk seam. Under the Amiberry emulator's
+> bsdsocket emulation this is observable on short chunk sizes; on real
+> hardware with PiStorm + a TCP stack like Roadshow the headroom is larger.
+> If you hear boundary artefacts, raise `split_words` (fewer, longer chunks)
+> or drop back to `0` (one request, slower start, but no seams).
+
+A genuinely unpunctuated run-on won't split (it stays one request — slower
+start, but never a mid-phrase gap). Leave it at `0` for the most faithful
+prosody.
 
 ## Limitations / future work
 
