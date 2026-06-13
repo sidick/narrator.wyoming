@@ -136,7 +136,7 @@ body:
     attributes:
       label: Pre-flight
       options:
-        - label: I'm running the latest release (or a develop checkout) of narrator.wyoming.
+        - label: I'm running the latest release (or a main-branch checkout) of narrator.wyoming.
           required: true
         - label: I've checked the README's TROUBLESHOOTING section and the docs/README.txt limitations list.
           required: true

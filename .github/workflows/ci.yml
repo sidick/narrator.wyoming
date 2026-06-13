@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Simon Dick
 
-# CI -- run on every push to develop/main and every PR. Three independent
-# jobs so a failure in one doesn't mask the others:
+# CI -- run on every push to main and every PR targeting main. Three
+# independent jobs so a failure in one doesn't mask the others:
 #
 #   host-build : `make host` with the strict -Wall -Wextra -Werror flags.
 #                Tests that the host-side wyomingtest + saytest still build
@@ -22,9 +22,9 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    branches: [main]
   pull_request:
-    branches: [develop, main]
+    branches: [main]
 
 # Cancel in-flight runs on the same ref when a new push comes in -- saves CI
 # time when someone is force-pushing iterations during review.

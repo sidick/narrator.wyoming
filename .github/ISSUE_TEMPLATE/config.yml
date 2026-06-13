@@ -11,5 +11,5 @@ contact_links:
     about: Setup, prefs, Docker/Piper server, and a TROUBLESHOOTING section that covers the common "clipped consonants / harsh peaks / sibilance / long-sentence latency / hang" symptoms before you file an issue.
 
   - name: Aminet readme
-    url: https://github.com/sidick/narrator.wyoming/blob/develop/NarratorWyomingDev.readme
+    url: https://github.com/sidick/narrator.wyoming/blob/main/NarratorWyomingDev.readme
     about: Short summary, requirements, install steps, configuration reference.
