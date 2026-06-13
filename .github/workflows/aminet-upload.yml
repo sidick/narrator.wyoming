@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Simon Dick
+
+# Manual Aminet upload. Triggered by hand from the Actions tab (or
+# `gh workflow run`) when you need to push an existing GitHub Release's
+# artefacts to Aminet -- typically because the automated upload in
+# release.yml failed (FTP hiccup, Aminet maintenance, anything else
+# transient) and you want to retry without re-tagging.
+#
+# The workflow downloads the versioned lha + readme from the named
+# GitHub Release, renames them to the unversioned form Aminet expects,
+# and runs the same aminet-release-action that release.yml uses.
+#
+# Notes on the action's "attach to matching GitHub Release" step here:
+# workflow_dispatch sets GITHUB_REF to the dispatched branch, not the
+# tag, so the action's tag-detection short-circuits and skips the
+# attachment. That's the right behaviour here -- we're recovering from
+# an Aminet-side problem, the GitHub Release page already has its
+# assets, no need to re-upload them.
+
+name: Aminet upload (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Release tag to upload (e.g. v44.0). Must have a matching GitHub
+          Release with NarratorWyomingDevice-<version>.lha and
+          NarratorWyomingDevice-<version>.readme attached.
+        required: true
+        type: string
+
+permissions:
+  contents: read   # `gh release download` needs read access to release assets
+
+jobs:
+  upload:
+    name: Upload to Aminet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fetch artefacts from the named GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          V="${TAG#v}"
+          mkdir -p build
+          gh release download "$TAG" \
+            -R "$GITHUB_REPOSITORY" \
+            -p "NarratorWyomingDevice-${V}.lha" \
+            -p "NarratorWyomingDevice-${V}.readme" \
+            --dir /tmp
+          # Aminet expects unversioned filenames -- the .readme's
+          # "Version:" field and Aminet's own slot carry the version.
+          # Stage them inside $GITHUB_WORKSPACE so the action's Docker
+          # container can see them (only the workspace gets mounted).
+          cp "/tmp/NarratorWyomingDevice-${V}.lha"    build/NarratorWyomingDevice.lha
+          cp "/tmp/NarratorWyomingDevice-${V}.readme" NarratorWyomingDevice.readme
+
+      - name: Publish to Aminet
+        uses: sidick/aminet-release-action@v1
+        with:
+          filename: build/NarratorWyomingDevice.lha
+          readme: NarratorWyomingDevice.readme
+          category: util/sys
