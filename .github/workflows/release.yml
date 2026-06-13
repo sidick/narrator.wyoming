@@ -38,7 +38,15 @@ jobs:
           fetch-depth: 0
 
       - name: Build archive
-        run: make dist
+        run: |
+          make dist
+          # `make dist` runs the Bebbo amiga-gcc image, which creates the
+          # build/ tree as root inside the container -- and once Docker
+          # exits those files are still root-owned on the runner. Hand
+          # ownership back to the runner user so the cp step below (and
+          # anything else host-side that touches build/) can write into
+          # the directory without sudo.
+          sudo chown -R "$USER" build/
 
       - name: Sanity-check archive contents
         run: |
