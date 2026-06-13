@@ -85,7 +85,15 @@ DISTSTAGE := $(BUILD)/dist/$(DISTNAME)
 DISTLHA   := $(BUILD)/$(DISTNAME).lha
 
 # --- Docker ---
-IMAGE      ?= stefanreinauer/amiga-gcc:latest
+# Pin the cross-compiler image by digest, not by mutable `:latest`. This is
+# what makes a 44.0 build today and a 44.0 build a year from now produce
+# identical binaries, regardless of what stefanreinauer pushes upstream
+# afterwards. To roll forward intentionally:
+#   docker pull stefanreinauer/amiga-gcc:latest
+#   docker image inspect --format='{{index .RepoDigests 0}}' \
+#       stefanreinauer/amiga-gcc:latest
+# then paste the resulting `stefanreinauer/amiga-gcc@sha256:...` below.
+IMAGE      ?= stefanreinauer/amiga-gcc@sha256:68f3233fe3b270654b471e11e0b2e25fae0ac34350959b5be360c9af84ef388a
 DOCKER_RUN := docker run --rm -v "$(CURDIR)":/work -w /work $(IMAGE)
 
 .PHONY: all host amiga docker dist dist-pack bump release version readme-version refresh-codesets clean
