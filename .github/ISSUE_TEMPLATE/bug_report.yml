@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Simon Dick
+
+name: Bug report
+description: Something doesn't work as documented (Say returns an error, audio is garbled, the device hangs, a Guru, etc.)
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The fields below help
+        narrow down what's going on without a round-trip; please fill in
+        as much as you can.
+
+        Quick smoke tests before filing, if you haven't already:
+          - `Version narrator.device FULL`        (confirms the install)
+          - `Version translator.library FULL`
+          - `./build/amiga/wyomingtest <host>`    (confirms the network path)
+          - Compare `Say "Hello"` vs the stock formant `narrator.device`.
+
+  - type: input
+    id: version
+    attributes:
+      label: narrator.wyoming version
+      description: Output of `Version narrator.device FULL`.
+      placeholder: "e.g. narrator.device 44.0 (13.06.2026)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      description: Where is the Amiga side running?
+      options:
+        - Real Amiga, PiStorm / emu68k accelerator
+        - Real Amiga, vanilla 68k accelerator (e.g. Blizzard, '060)
+        - Amiberry
+        - WinUAE / FS-UAE
+        - Other emulator
+    validations:
+      required: true
+
+  - type: input
+    id: amigaos
+    attributes:
+      label: AmigaOS version
+      description: e.g. 3.1, 3.2, 3.9, MorphOS, AROS
+      placeholder: "3.2.2"
+    validations:
+      required: true
+
+  - type: input
+    id: ahi
+    attributes:
+      label: AHI version + unit setup
+      description: AHI version, output mode, and which `ahi_unit` you have set in prefs.
+      placeholder: "AHI 6.0, Paula 22050/8-bit, ahi_unit=0"
+    validations:
+      required: true
+
+  - type: input
+    id: tcp
+    attributes:
+      label: TCP/IP stack
+      description: Roadshow, AmiTCP, Amiberry bsdsocket emulation, MiamiDX, etc.
+      placeholder: "Roadshow 1.16"
+    validations:
+      required: true
+
+  - type: input
+    id: codesets
+    attributes:
+      label: codesets.library version (if installed)
+      description: From `Version codesets.library`. Leave blank if not installed.
+      placeholder: "6.22"
+
+  - type: input
+    id: piper
+    attributes:
+      label: Piper / Wyoming server
+      description: Container or build, version if known, voice you're using.
+      placeholder: "rhasspy/wyoming-piper latest, voice en_US-lessac-medium"
+    validations:
+      required: true
+
+  - type: textarea
+    id: prefs
+    attributes:
+      label: ENV:narrator.wyoming
+      description: Paste the current prefs file (redact your real LAN IP if you'd rather not share it).
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: Be concrete. "Say returned WARN", "audio cut off after 2 seconds", "Guru #8000000B at $abc12300", etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Guru info
+      description: |
+        If running our `devtest` or `failtest`, paste the `.log` output.
+        For a Guru: the alert code (e.g. `8000000B`) and the address. A
+        screenshot of the alert box is fine too -- drop it into the
+        textarea and GitHub will inline it.
+      render: text
+
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I'm running the latest release (or a develop checkout) of narrator.wyoming.
+          required: true
+        - label: I've checked the README's TROUBLESHOOTING section and the docs/README.txt limitations list.
+          required: true
+        - label: I've searched existing issues for a similar report.
+          required: true
