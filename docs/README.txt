@@ -47,6 +47,10 @@ Amiga side:
   * A fast 68k.  PiStorm / emu68k is the design target; ~68030 at 40 MHz
     upwards should also be usable.  No FPU is required.
   * No TLS / AmiSSL -- Wyoming is plain TCP.
+  * OPTIONAL: codesets.library (Aminet: util/libs/codesets) for native-
+    locale text input.  Without it, pure ASCII and pre-encoded UTF-8 work
+    fine but ISO-8859-1 accents / umlauts go through raw and Piper may
+    reject them.  See the CONFIGURATION section.
 
 Server side:
 
@@ -194,9 +198,13 @@ Wyoming synthesize request has no per-request rate/pitch knob (those are
 properties of the Piper voice, set server-side).  `volume' (0-64) and
 `sex' are honoured (sex selects the configured voice).
 
-Text must be UTF-8.  Plain ASCII (everyday English) is unaffected; if you
-need to send ISO-8859-1 high bytes (0x80-0xFF) directly Piper will reject
-or mojibake the request.
+Text codeset.  The Wyoming JSON sent to Piper is UTF-8 only.  The device
+auto-detects the caller's text: valid UTF-8 (including pure ASCII) is
+passed through, and anything else is transcoded from ISO-8859-1 to UTF-8
+via the optional `codesets.library' (Aminet:util/libs/codesets) if it
+is installed.  Without codesets.library, non-UTF-8 input is passed
+through unchanged and Piper may reject it -- install codesets.library
+to handle native-locale text (accented characters, umlauts, etc.).
 
 The prefs are snapshotted when the device task starts.  Edits do not take
 effect until the device is closed and reopened.  In practice each `Say'

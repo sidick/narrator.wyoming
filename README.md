@@ -55,6 +55,9 @@ English reaches our device, which forwards it to Piper.
 - A **TCP/IP stack** (Roadshow / AmiTCP) providing `bsdsocket.library` — or
   Amiberry's built-in `bsdsocket.library` emulation.
 - Fast 68k (PiStorm/emu68k or ~68030/40MHz+). No FPU required. No TLS/AmiSSL.
+- **Optional**: `codesets.library` (Aminet: `util/libs/codesets`) for native-locale
+  text input. ASCII and pre-encoded UTF-8 work without it; ISO-8859-1 (accents,
+  umlauts) needs it or Piper may reject the request.
 
 **Server side**
 - A **Piper** TTS server reachable on your LAN with the **Wyoming** protocol
@@ -240,9 +243,12 @@ voice, set server-side).
 > will keep using the values it loaded at `OpenDevice`. Close and reopen the
 > device to pick up new prefs.
 
-> **Text must be UTF-8.** The synthesize request is plain JSON, so callers
-> sending ISO-8859-1 high bytes (`0x80`–`0xFF`) directly will produce mojibake
-> or a rejected request at Piper. Pure ASCII (everyday English) is unaffected.
+> **Text codeset.** The Wyoming JSON requires UTF-8. The device auto-detects
+> the caller's text: valid UTF-8 (including pure ASCII) is passed through,
+> and anything else is transcoded from ISO-8859-1 to UTF-8 via the optional
+> `codesets.library` (Aminet) if it is installed. If `codesets.library` is
+> not present, non-UTF-8 input is passed through unchanged and Piper may
+> reject it — install codesets.library to handle native-locale text.
 
 ### Faster start on long input (`split_words`)
 

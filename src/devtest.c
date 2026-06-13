@@ -76,8 +76,27 @@ int main(void)
         printf("write2 (vol 16) done: io_Error=%d io_Actual=%lu\n",
                (int)io2->message.io_Error, (unsigned long)io2->message.io_Actual);
 
-        DeleteIORequest((struct IORequest *)io2);
+        /* Codesets path: literal ISO-8859-1 bytes in the string (the \xNN
+         * escapes compile as the raw byte). The engine's UTF-8 detector
+         * should reject this as not-valid-UTF-8 and route it through
+         * codesets.library for transcoding to UTF-8 before Piper sees it.
+         * If transcoding is wired up, io_Error=0 and io_Actual>0. If it's
+         * skipped, Piper's JSON parser rejects the invalid UTF-8 and we
+         * get a non-zero io_Error. */
+        {
+            char *t3 = "A caf\xe9 in M\xfcnchen.";   /* é + ü in ISO-8859-1 */
+            io->volume = MAXVOL;
+            io->message.io_Command = CMD_WRITE;
+            io->message.io_Data    = (APTR)t3;
+            io->message.io_Length  = strlen(t3);
+            DoIO((struct IORequest *)io);
+            printf("write3 (ISO-8859-1, %ld bytes in): io_Error=%d io_Actual=%lu\n",
+                   (long)strlen(t3),
+                   (int)io->message.io_Error, (unsigned long)io->message.io_Actual);
+        }
+
         CloseDevice((struct IORequest *)io);
+        DeleteIORequest((struct IORequest *)io2);
         printf("CloseDevice ok\n");
     }
 

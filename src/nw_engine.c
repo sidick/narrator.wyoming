@@ -37,6 +37,11 @@
 #include <proto/bsdsocket.h>
 #include <proto/dos.h>
 
+/* Optional: codesets.library for non-UTF-8 text input (ISO-8859-1 etc.).
+ * Opened soft — if the library isn't installed, the engine falls back to
+ * passing text through unchanged (today's behaviour). */
+#include "codesets_proto.h"
+
 #define RBUFSZ   16384
 /* Two ping-ponging AHI buffers, chained with ahir_Link for gapless playback
  * (AHI plays linked CMD_WRITEs sequentially; without the link it plays them
@@ -114,6 +119,13 @@ struct NW {
     /* persistent-connection bookkeeping (the held endpoint) */
     char  chost[128];
     int   cport;
+
+    /* Optional codesets.library state. NULL when the library isn't installed;
+     * cs_iso/cs_utf may also be NULL if the named codesets aren't registered,
+     * in which case transcoding is skipped (pass-through). */
+    struct Library *CodesetsBase;
+    struct codeset *cs_iso;       /* ISO-8859-1 source */
+    struct codeset *cs_utf;       /* UTF-8 dest */
 
     /* Runtime prefs, snapshotted at task start (see nw_dev_task). Caching
      * here means each CMD_WRITE doesn't re-open dos.library + reparse
@@ -583,6 +595,15 @@ static struct NW *session_create(struct ExecBase *SysBase)
         SocketBaseTags(SBTM_SETVAL(SBTC_ERRNOPTR(sizeof(s->err))),
                        (long)&s->err, TAG_END);
     }
+    /* Soft-open codesets.library: only used when caller text is non-UTF-8.
+     * If the library or either codeset isn't there, transcoding is skipped
+     * (pass-through — same as before this feature existed). */
+    s->CodesetsBase = OpenLibrary((STRPTR)CODESETSNAME, 0);
+    if (s->CodesetsBase) {
+        struct Library *CodesetsBase = s->CodesetsBase;
+        s->cs_iso = CodesetsFindA((CONST_STRPTR)"ISO-8859-1", (struct TagItem *)0);
+        s->cs_utf = CodesetsFindA((CONST_STRPTR)"UTF-8",      (struct TagItem *)0);
+    }
     return s;
 }
 
@@ -601,8 +622,111 @@ static void session_close(struct NW *s)
     SysBase = s->SysBase;
     ahi_close(s);                        /* drain + free AHI */
     session_disconnect(s);
-    if (s->SocketBase) CloseLibrary(s->SocketBase);
+    if (s->CodesetsBase) CloseLibrary(s->CodesetsBase);
+    if (s->SocketBase)   CloseLibrary(s->SocketBase);
     FreeMem(s, (ULONG)sizeof(struct NW));
+}
+
+/* ---- text codeset handling ----
+ *
+ * Caller text comes from the IOSpeech `io_Data` field and may be in whatever
+ * codeset the calling app uses. Piper's Wyoming JSON is UTF-8 only, so we
+ * need to recognise non-UTF-8 input and transcode it.
+ *
+ * Strategy: cheap heuristic first — if the bytes are valid UTF-8, pass
+ * through (covers pure ASCII, which always passes, and apps that already
+ * speak UTF-8). Otherwise, if codesets.library and an ISO-8859-1 codeset
+ * are available, ask it to transcode to UTF-8. Otherwise pass through
+ * (today's behaviour — Piper will see mojibake but at least the request
+ * goes out). ISO-8859-1 is the right default guess on classic Amigas. */
+
+/* Strict UTF-8 validation per RFC 3629 — rejects 5/6-byte sequences,
+ * surrogate halves (D800-DFFF), and overlongs. Returns 1 if every byte in
+ * t[0..len) belongs to a valid UTF-8 codepoint, 0 otherwise. Pure ASCII
+ * is valid UTF-8 so always passes. */
+static int is_valid_utf8(const unsigned char *t, long len)
+{
+    long i = 0;
+    while (i < len) {
+        unsigned int c = t[i];
+        int  trail;
+        unsigned long cp;
+        if (c < 0x80)        { i++; continue; }
+        if (c < 0xC2)        return 0;             /* lone continuation or overlong */
+        if (c < 0xE0)        { trail = 1; cp = c & 0x1F; }
+        else if (c < 0xF0)   { trail = 2; cp = c & 0x0F; }
+        else if (c < 0xF5)   { trail = 3; cp = c & 0x07; }
+        else                 return 0;             /* 5/6-byte sequences invalid */
+        if (i + trail >= len) return 0;
+        {
+            int k;
+            for (k = 1; k <= trail; k++) {
+                unsigned int cc = t[i + k];
+                if ((cc & 0xC0) != 0x80) return 0;
+                cp = (cp << 6) | (cc & 0x3F);
+            }
+        }
+        /* Reject overlongs and surrogate halves. */
+        if (trail == 1 && cp < 0x80)            return 0;
+        if (trail == 2 && cp < 0x800)           return 0;
+        if (trail == 3 && cp < 0x10000)         return 0;
+        if (cp >= 0xD800 && cp <= 0xDFFF)       return 0;
+        if (cp > 0x10FFFF)                      return 0;
+        i += 1 + trail;
+    }
+    return 1;
+}
+
+/* If `text` is already valid UTF-8 (or codesets isn't available), return 0
+ * and leave *out/*outlen alone (caller uses the original text). Otherwise
+ * transcode from ISO-8859-1 to UTF-8 into a freshly-allocated buffer, set
+ * *out + *outlen, and return 1. Caller must release with
+ * nw_release_transcoded(s, *out). */
+static int nw_transcode_to_utf8(struct NW *s, const char *text, long len,
+                                const char **out, long *outlen)
+{
+    struct Library *CodesetsBase;
+    /* Pure-ASCII fast path: scan for any high byte first; if none, no work. */
+    {
+        long i;
+        for (i = 0; i < len; i++)
+            if ((unsigned char)text[i] >= 0x80) goto needs_check;
+        return 0;                                /* all ASCII -> already UTF-8 */
+    needs_check: ;
+    }
+    if (is_valid_utf8((const unsigned char *)text, len))
+        return 0;                                /* well-formed UTF-8 already */
+    if (!s->CodesetsBase || !s->cs_iso || !s->cs_utf)
+        return 0;                                /* no transcoder -> pass through */
+
+    CodesetsBase = s->CodesetsBase;
+    {
+        ULONG newlen = 0;
+        struct TagItem tags[] = {
+            { CSA_Source,        (ULONG)text },
+            { CSA_SourceLen,     (ULONG)len  },
+            { CSA_SourceCodeset, (ULONG)s->cs_iso },
+            { CSA_DestCodeset,   (ULONG)s->cs_utf },
+            { CSA_DestLenPtr,    (ULONG)&newlen },
+            { TAG_DONE,          0 }
+        };
+        STRPTR conv = CodesetsConvertStrA(tags);
+        if (!conv) return 0;                     /* convert failed -> pass through */
+        *out    = (const char *)conv;
+        *outlen = (long)newlen;
+        return 1;
+    }
+}
+
+static void nw_release_transcoded(struct NW *s, const char *buf)
+{
+    struct Library *CodesetsBase;
+    if (!buf || !s->CodesetsBase) return;
+    CodesetsBase = s->CodesetsBase;
+    {
+        struct TagItem tags[] = { { TAG_DONE, 0 } };
+        CodesetsFreeA((APTR)buf, tags);
+    }
 }
 
 /* Ensure the held socket is connected to host:port (reconnect if the endpoint
@@ -963,9 +1087,18 @@ static void nw_do_write(struct NW *s, struct narrator_rb *nrb)
      * ceiling. Fixed 16.16, so unity (vol == MAXVOL) * gain/100 stays <= 0x10000. */
     avol = (vol * (0x10000L / MAXVOL)) * prefs->gain / 100;
 
-    n = nw_session_say(s, prefs->host, (unsigned short)prefs->port,
-                       (const char *)nrb->message.io_Data, (long)nrb->message.io_Length,
-                       voice, avol, prefs->split_words);
+    {
+        const char *txt    = (const char *)nrb->message.io_Data;
+        long        txtlen = (long)nrb->message.io_Length;
+        const char *conv   = 0;
+        long        convlen = 0;
+        int         did_convert = nw_transcode_to_utf8(s, txt, txtlen, &conv, &convlen);
+        if (did_convert) { txt = conv; txtlen = convlen; }
+        n = nw_session_say(s, prefs->host, (unsigned short)prefs->port,
+                           txt, txtlen,
+                           voice, avol, prefs->split_words);
+        if (did_convert) nw_release_transcoded(s, conv);
+    }
     if (n >= 0) { nrb->message.io_Actual = (ULONG)n;    nrb->message.io_Error = 0; }
     else        { nrb->message.io_Actual = (ULONG)(-n); nrb->message.io_Error = (BYTE)-1; }
 }
