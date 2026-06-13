@@ -40,3 +40,4 @@ Wait 30
 ; --- Standalone test programs (uncomment to run instead) ---
 ; build/amiga/saytest     >Narrator:saytest.log
 ; build/amiga/wyomingtest >Narrator:wyomingtest.log
+; build/amiga/failtest    >Narrator:failtest.log    ; graceful-failure scenarios
