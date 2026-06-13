@@ -72,7 +72,7 @@ jobs:
       # entirely (saves ~30-60 s per workflow). Miss -> pull + save.
       - name: Cache amiga-gcc Docker image
         id: docker-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/amiga-gcc.tar
           key: amiga-gcc-${{ steps.img.outputs.key }}
@@ -122,7 +122,7 @@ jobs:
       # we invoke semgrep busts the cache -- in practice that means bumping
       # the pinned semgrep version invalidates it automatically.
       - name: Cache pip wheels
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-semgrep-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
