@@ -62,8 +62,10 @@ jobs:
       # gate before the GitHub Release goes public.
       #
       # validate-only: true keeps it as a pure check; the FTP upload to
-      # Aminet stays manual for now. Switch to false (and add
-      # uploader-email) when we're ready to automate the Aminet push.
+      # Aminet stays manual for now. Switch to false (just remove the
+      # validate-only line) when we're ready to automate the Aminet
+      # push -- the action derives the uploader email from the readme's
+      # Uploader: line, so no other input changes are needed.
       - name: Validate Aminet package (readme + structure)
         uses: sidick/aminet-release-action@v1
         with:
