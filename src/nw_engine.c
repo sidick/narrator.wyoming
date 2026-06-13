@@ -39,8 +39,12 @@
 
 /* Optional: codesets.library for non-UTF-8 text input (ISO-8859-1 etc.).
  * Opened soft — if the library isn't installed, the engine falls back to
- * passing text through unchanged (today's behaviour). */
-#include "codesets_proto.h"
+ * passing text through unchanged (today's behaviour). Headers are vendored
+ * from upstream jens-maus/libcodesets under third_party/codesets/include/
+ * (see that directory's README + LICENSE). */
+#define __NOLIBBASE__               /* suppress upstream's extern CodesetsBase */
+#include <libraries/codesets.h>
+#include <proto/codesets.h>
 
 #define RBUFSZ   16384
 /* Two ping-ponging AHI buffers, chained with ahir_Link for gapless playback

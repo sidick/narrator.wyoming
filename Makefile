@@ -55,6 +55,10 @@ DEVINIT     ?= /opt/amiga/m68k-amigaos/libnix/lib/devinit.o
 # 32-bit *//* don't become libgcc __mulsi3/__divsi3 calls we can't link.
 # -msoft-float: keep FPU opcodes out (they trap as F-line on this config).
 DEV_CFLAGS  ?= -nostdlib -O3 -fomit-frame-pointer -fbaserel -m68020 -msoft-float -DPLATFORM_AMIGA
+# Vendored upstream codesets.library headers (third_party/codesets/include).
+# The Bebbo NDK does not include them; we vendor jens-maus/libcodesets's so
+# the engine can speak the library's published ABI rather than re-derive it.
+DEV_INCLUDES := -Ithird_party/codesets/include
 DEV_SRCS    := $(SRCDIR)/narrator_device.c $(SRCDIR)/nw_engine.c
 DEV_BIN     := $(BUILD)/amiga/narrator.device
 # Nothing about the server/voice is baked into the binary — the device reads it
@@ -100,7 +104,7 @@ $(LIB_BIN): $(SRCDIR)/translator_library.c $(HDRS)
 
 $(DEV_BIN): $(DEV_SRCS) $(HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(DEV_CFLAGS) $(VERDEF) $(DEVINIT) $(DEV_SRCS) -o $@
+	$(CC) $(DEV_CFLAGS) $(DEV_INCLUDES) $(VERDEF) $(DEVINIT) $(DEV_SRCS) -o $@
 
 # devtest: normal CLI program that opens+drives narrator.device (clib2).
 $(BUILD)/amiga/devtest: $(SRCDIR)/devtest.c
