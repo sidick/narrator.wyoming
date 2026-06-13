@@ -28,11 +28,19 @@ other proto/* includes already use.
 
 ## Source revision
 
-Vendored from upstream commit
-[`34442b75bb42666f5d133d74db3350d2159c0a65`](https://github.com/jens-maus/libcodesets/commit/34442b75bb42666f5d133d74db3350d2159c0a65)
-on 2026-06-13. If you refresh these files, update this README + the
-commit hash, and re-run the on-target devtest (write 3 exercises the
-ISO-8859-1 → UTF-8 transcoding path through `CodesetsConvertStrA`).
+Run `./refresh.sh` from this directory (or `make refresh-codesets` from
+the repo root) to pull the latest upstream release and update both the
+vendored headers and the pinned revision block below. Re-run the
+on-target devtest after refreshing — write 3 exercises the
+ISO-8859-1 → UTF-8 path through `CodesetsConvertStrA`.
+
+<!-- BEGIN: source-revision (managed by refresh.sh) -->
+Vendored from upstream release [`6.22`](https://github.com/jens-maus/libcodesets/releases/tag/6.22) (published 2024-02-26,
+commit [`34442b75bb42666f5d133d74db3350d2159c0a65`](https://github.com/jens-maus/libcodesets/commit/34442b75bb42666f5d133d74db3350d2159c0a65)).
+<!-- END: source-revision -->
+
+To pin a specific release rather than master, pass `--version <tag>`
+to `refresh.sh` (e.g. `--version 6.22`).
 
 ## License
 

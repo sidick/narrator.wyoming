@@ -88,7 +88,7 @@ DISTLHA   := $(BUILD)/$(DISTNAME).lha
 IMAGE      ?= stefanreinauer/amiga-gcc:latest
 DOCKER_RUN := docker run --rm -v "$(CURDIR)":/work -w /work $(IMAGE)
 
-.PHONY: all host amiga docker dist dist-pack bump release version readme-version clean
+.PHONY: all host amiga docker dist dist-pack bump release version readme-version refresh-codesets clean
 
 all: host
 
@@ -192,6 +192,17 @@ release:
 	@git tag -a v$(VERSION).$(REVISION) -m "narrator.wyoming $(VERSION).$(REVISION)"; \
 	  echo "Tagged v$(VERSION).$(REVISION)  ->  $(DISTLHA)"; \
 	  echo "Next: 'make bump' to open the next test cycle, then 'git push --follow-tags'"
+
+# Refresh vendored codesets.library headers from upstream (latest GitHub
+# release by default; pass V=<tag> for a specific one — e.g. V=6.22). The
+# script lives next to the vendored tree so it's easy to find. Re-run the
+# on-target devtest afterwards (write 3 covers the codesets path).
+refresh-codesets:
+	@if [ -n "$(V)" ]; then \
+	   third_party/codesets/refresh.sh --version "$(V)"; \
+	 else \
+	   third_party/codesets/refresh.sh; \
+	 fi
 
 clean:
 	rm -rf $(BUILD)
