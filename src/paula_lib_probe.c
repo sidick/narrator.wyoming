@@ -54,7 +54,11 @@
 #include <string.h>
 
 #define INPUT_PATH      "Narrator:capture_raw.wav"
-#define MODE_ID         0x0002000cUL    /* paula, the user's unit 0 mode */
+#define MODE_ID         0x00020018UL    /* paula candidate mode — empirically NOT better
+                                         * than unit 0's 0x0002000c (see commit log).
+                                         * Edit this to test other paula modes; the
+                                         * docs/audio-capture-rig.md rig will report
+                                         * per-band RMS so you can compare. */
 #define HEADROOM_TICKS  25              /* 0.5 s on top of the audio's duration */
 
 struct Library *AHIBase;

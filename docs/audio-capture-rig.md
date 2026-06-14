@@ -134,15 +134,55 @@ pre-filter — *if* aliasing were happening at the input stage. It's not.
 Aliasing is being injected *after* our processing, in the AHI -> paula
 output path. Pre-filtering input can't suppress what gets added later.
 
-Things that would actually help, in roughly increasing engineering cost:
+### What we've ruled out
 
-1. **Switch to the AHI library interface** — likely fixes most of it by
-   not going through the suspect Paula-mode mix freq. Replicate what
-   Play16 does.
-2. **Pick a different unit / mode** with a clean 22050 mix freq.
-3. **Ask Piper for 11025 Hz output** so the chain has nothing above
-   5.5 kHz to alias up — sounds duller but eliminates the harshness
-   entirely.
+A 4-phase BlackHole-loopback test (all in one boot, split on silence
+gaps) compared every plausible knob:
+
+| Phase | Path | 11-15kHz | 15-20kHz |
+|---|---|---|---|
+| 1 | Say (CMD_WRITE -> AHI -> paula mode 0x0002000c) | 92.0 | 68.3 |
+| 2 | paula_lib_probe (AHI library -> paula mode 0x00020018) | 94.7 | 69.2 |
+| 3 | Play16 OUTPUT=AHI MODE=131096 (paula mode 0x00020018) | 95.8 | 69.9 |
+| 4 | Play16 OUTPUT=PAULA14 (direct paula, AHI bypassed) | **76.8** | **53.8** |
+
+The first three are within 4% of each other — **library-vs-device API
+doesn't matter; choice of paula mode doesn't matter** (at least between
+the two we tested). The aliasing is intrinsic to having AHI's mixer in
+the path, regardless of which paula mode the mixer feeds.
+
+Phase 4 (bypass AHI) is the only meaningfully cleaner path: -1.8 dB and
+-2.2 dB in the two aliasing bands. It also has -1.07 dB at 8-11 kHz vs
+source — paula 14-bit direct has an inherent low-pass at that band,
+doing some of what `smooth_buf` tries to do but applied at the right
+point in the chain. It's not zero aliasing (76.8 RMS at 11-15 kHz, vs
+BlackHole's exact-zero noise floor), but it's the cleanest path
+measured.
+
+### Things that would actually help, in roughly increasing engineering cost
+
+1. **Bypass AHI entirely** — write directly to `audio.device` (Paula
+   8/14-bit) like Play16's PAULA14 output does. Loses AHI's portability
+   (sound cards) but eliminates the AHI-mixer aliasing. Significant
+   refactor of `audio_ahi.c` / `nw_engine.c`. Doesn't eliminate paula's
+   own aliasing (still 77/54 RMS above source Nyquist) but it's the
+   single biggest improvement we can measure.
+2. **Pre-filter harder** — `smooth 3` or stronger. The smooth_buf
+   filter's effect on the *source* survives the chain in inverse
+   proportion to AHI's contribution (since AHI puts highs back), so
+   pre-cutting the source more aggressively still helps if the input
+   has less to be aliased up. Sample-rate-dependent: smooth that nulls
+   at 22050/2 doesn't shape the band we care about (5-11 kHz). Worth
+   trying anyway.
+3. **Ask Piper for 11025 Hz output** — half the sample rate means the
+   chain has nothing above 5.5 kHz to alias upward. Sounds duller but
+   the harsh sibilance band is gone by physics. Trivial change on the
+   server side. Best if the listener cares about clarity over fidelity.
+4. **Enumerate paula modes** — we only tested two paula modes
+   (0x0002000c and 0x00020018) and they were indistinguishable. The
+   PAULA AudioMode file is 2 KB (vs FILESAVE's 800 B) so it has many
+   more modes. Worth running the probe against each before giving up
+   on AHI.
 
 ## Reproduction quick-script
 
