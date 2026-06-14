@@ -146,6 +146,15 @@ $(BUILD)/amiga/ahi_capture: $(SRCDIR)/ahi_capture.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/ahi_capture.c
 
+# paula_lib_probe: replay a WAV through paula via the AHI LIBRARY interface
+# (AHI_AllocAudio + AHI_Play with explicit AHIA_AudioID/AHIA_MixFreq) — the
+# same family Play16 likely uses. Lets us A/B against the CMD_WRITE path
+# we use today: does the harsh 11-15 kHz aliasing go away with the
+# library interface? clib2.
+$(BUILD)/amiga/paula_lib_probe: $(SRCDIR)/paula_lib_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/paula_lib_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)
