@@ -61,6 +61,17 @@ gain 80
 # (1, or 0 = off) if speech sounds muffled.
 smooth 2
 
+# --- PCM capture (optional, for audio-quality investigation) ---
+# When set to an AmigaDOS path, the device also writes a WAV copy of the PCM
+# stream it hands AHI -- post-smooth, pre-byte-swap, i.e. the little-endian
+# 16-bit samples Wyoming sent us after the high-cut filter. Format matches
+# Wyoming's output (22050Hz / 16-bit / mono), so the file is directly
+# comparable to a wyomingtest --out reference dump. Spans one device session
+# (OpenDevice..CloseDevice) and is overwritten on each open. Empty (or omitted)
+# = capture off. Useful target: Narrator:capture.wav (lands in the repo root
+# on the host via the Amiberry mount). Off by default.
+# capture Narrator:capture.wav
+
 # --- Latency: split long input into pipelined chunks (optional) ---
 # Piper synthesizes one SENTENCE at a time, so a single long sentence has to be
 # fully rendered before any audio starts (e.g. ~2.3s for a 40-word run-on).

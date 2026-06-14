@@ -41,6 +41,12 @@ struct nwprefs {
                               * the 8-11 kHz sibilance that AHI's resample + 8-bit
                               * Paula turn harsh, while leaving speech body intact.
                               * Default 2 (validated on-target); 1 is gentler. */
+    char capture[128];       /* if non-empty, also write the PCM stream as it's
+                              * handed to AHI (post-smooth, pre-byte-swap = the
+                              * little-endian samples Wyoming sent us, filtered)
+                              * to this AmigaDOS path as a WAV file. Spans one
+                              * device-task lifetime; one CMD_WRITE may concat
+                              * many synthesis chunks. Empty = capture off. */
 };
 
 /* Fill *p with defaults, then overlay ENV:narrator.wyoming if present. */
