@@ -194,6 +194,15 @@ $(BUILD)/amiga/stream_probe: $(SRCDIR)/stream_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/stream_probe.c
 
+# oneshot_stream_probe: tests option 3 in docs/streaming-v2-notes.md
+# — one large DYNAMICSAMPLE buffer played non-looping, fill from the
+# front while it plays. Sidesteps the loop/cache race that stream_probe
+# tripped (50/50 audio/silence). Same 440/880/440 pattern; expects
+# continuous audio for ~5.4 s.
+$(BUILD)/amiga/oneshot_stream_probe: $(SRCDIR)/oneshot_stream_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/oneshot_stream_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)

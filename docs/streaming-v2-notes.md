@@ -209,16 +209,77 @@ contents we mutate ahead of the play head, or whether we still need
 DYNAMIC even for one-shot non-looping playback. Probably DYNAMIC since
 without it AHI is allowed to read once and cache.
 
-## Recommended next move when we come back to this
+## Step 5 — `oneshot_stream_probe.c`, no-loop DYNAMICSAMPLE (PASSED)
 
-Implement option 3 as `oneshot_stream_probe.c`: allocate ~256 KB
-(~5.8 s of audio, big enough for the test) as DYNAMICSAMPLE, AHI_Play
-the whole thing as one non-looping sample, fill 8 KB chunks from the
-front while it plays, see if the gap pattern persists or not. If
-audio is clean, port it into `audio_ahi.c`. If the gap pattern still
-appears, fall back to v1 buffered playback for production and revisit
-when the AHI driver behavior is better understood.
+`oneshot_stream_probe.c` allocates a 256 KB buffer (~5.8 s), pre-fills
+the first 2 chunks with 440 Hz, `AHI_LoadSound` as DYNAMICSAMPLE,
+`AHI_Play` with NO `AHIP_LoopSound` (single-pass), then fills the
+remaining 28 chunks from the front 8 KB at a time, paced by Delay(9).
 
-Until then, `audio_ahi.c` and `nw_engine.c` stay on v1 buffered
-playback. v1 is well within latency budget (~450 ms first audio) and
-ships now.
+BlackHole capture (50 ms windows, Goertzel at 440 / 880 Hz):
+
+  t=5.70-7.20s  440 Hz dominant   continuous, full amplitude
+  t=7.25-8.70s  880 Hz dominant   continuous, full amplitude
+  t=8.75-10.25s 440 Hz dominant   continuous, full amplitude
+  t>10.30s      end (probe done)
+
+**4.6 seconds of unbroken audio. No gaps. Frequency pattern exactly
+matches what the producer wrote.** The 50/50 duty cycle from
+stream_probe is GONE. This confirms the working hypothesis: the
+loop+small-write interaction with AHI's mix-buffer cache was the
+gap source. Single-pass non-looping playback avoids the race
+entirely because each ring position is read exactly once and the
+write head naturally precedes the play head.
+
+## The streaming v2 design
+
+Adopted:
+
+  1. Allocate a buffer sized to the max expected single playback
+     (say 512 KB = ~11.6 s at 22050/16/mono; `MEMF_PUBLIC | MEMF_CLEAR`).
+  2. `AHI_LoadSound` as `AHIST_DYNAMICSAMPLE`, sample length = buffer
+     size in bytes.
+  3. `AHI_Play` with `AHIP_Sound = 0`, NO `AHIP_LoopSound`. AHI plays
+     once through the whole buffer and stops.
+  4. Producer writes Wyoming chunks into the buffer from the front
+     as they arrive. Write head advances; play head follows.
+  5. End-of-stream: compute remaining audio duration from
+     (bytes_written / bytes_per_sec) - elapsed_wall_since_play, Delay
+     that long, then `AHIC_Play FALSE`.
+  6. Overflow: if write head would pass buffer end, log + truncate
+     (or break into a follow-up Play, but that needs care).
+
+First-audio latency: time to recv one chunk worth of bytes (~50-100 ms
+on a fast LAN at 22050/16/mono) + AHI's own startup latency. Should
+beat v1's ~450 ms first-audio noticeably.
+
+Memory cost: 512 KB per OpenDevice — acceptable on accelerated 68k
+machines (PiStorm has megabytes free). Allocated once at OpenDevice,
+freed at CloseDevice.
+
+## Integration plan
+
+Port the pattern into `audio_ahi.c` (clib2, easier — `nw_engine.c`
+follows once that's solid). v1's `audio_open/audio_write/audio_close`
+shape stays the same; what changes is the internal state:
+
+  - v1: two `AHIRequest`s + ping-pong via `ahir_Link`, `audio_write`
+    blocks on a busy buffer.
+  - v2: one big buffer + AHI_LoadSound called once at `audio_open`,
+    AHI_Play called when first audio arrives, `audio_write` copies
+    into the buffer + advances the write head (no per-write
+    blocking).
+
+`audio_write` can be non-blocking entirely — the buffer absorbs all
+incoming data up to its size, and the play head reads at audio rate.
+That removes the network-paced-by-playback property of v1, but since
+the buffer naturally caps how much we accept, we still don't run
+away. For very long playbacks we either grow the buffer at
+`audio_open` or fall back to v1's blocking semantics.
+
+## Recommended next move
+
+Integration into `audio_ahi.c`. Probe code goes away once the design
+is in production. Stretch goal: `nw_engine.c` port (with `__saveds`
+attribute on any callback if needed under `-fbaserel`). v1's
+implementation stays in version-controlled history as a fallback.
