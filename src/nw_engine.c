@@ -120,6 +120,13 @@ struct NW {
     int   smooth;               /* high-cut passes (0=off); see smooth_buf       */
     short smz[SMOOTH_MAX];      /* per-pass previous-sample state for the filter  */
 
+    /* PCM capture: optional WAV tee of what we feed AHI (post-smooth, pre-swap)
+     * to the path in prefs.capture. Opened lazily on first ahi_submit; sizes are
+     * patched at session_close. DOSBase is open whenever captureFh != 0. */
+    struct DosLibrary *captureDOSBase;
+    BPTR  captureFh;            /* 0 = not open / disabled                       */
+    long  captureBytes;         /* data-chunk bytes written so far                */
+
     /* persistent-connection bookkeeping (the held endpoint) */
     char  chost[128];
     int   cport;
@@ -247,6 +254,7 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
     pr->split_words = 0;       /* off by default = whole text in one request */
     pr->gain = 80;             /* % of full scale; <100 = headroom for hot peaks */
     pr->smooth = 2;            /* high-cut: tame Paula-chain sibilance (validated) */
+    pr->capture[0] = '\0';     /* capture off unless user sets a path             */
 
     /* local named DOSBase so the proto/dos.h inlines (Open/Read/Close) use it */
     DOSBase = (struct DosLibrary *)OpenLibrary((STRPTR)"dos.library", 0);
@@ -272,6 +280,7 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
                     pref_get(buf, "split_words", splitstr, (long)sizeof(splitstr));
                     pref_get(buf, "gain", gainstr, (long)sizeof(gainstr));
                     pref_get(buf, "smooth", smoothstr, (long)sizeof(smoothstr));
+                    pref_get(buf, "capture", pr->capture, (long)sizeof(pr->capture));
                     if (portstr[0]) {
                         long v = 0; const char *q = portstr;
                         while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
@@ -347,11 +356,112 @@ static void smooth_buf(struct NW *nw, unsigned char *b, long bytes)
     }
 }
 
+/* ---- optional WAV capture (tee of the PCM we hand AHI) ---- */
+
+/* Little-endian writers for WAV header fields. */
+static void put_u16_le(unsigned char *p, unsigned short v)
+{
+    p[0] = (unsigned char)(v & 0xff);
+    p[1] = (unsigned char)((v >> 8) & 0xff);
+}
+static void put_u32_le(unsigned char *p, unsigned long v)
+{
+    p[0] = (unsigned char)(v & 0xff);
+    p[1] = (unsigned char)((v >> 8) & 0xff);
+    p[2] = (unsigned char)((v >> 16) & 0xff);
+    p[3] = (unsigned char)((v >> 24) & 0xff);
+}
+
+/* Lazy capture file open + 44-byte WAV skeleton (sizes patched at finalize).
+ * Best-effort: if dos.library or Open() fails, capture stays off silently. */
+static void capture_open(struct NW *nw)
+{
+    struct DosLibrary *DOSBase;
+    unsigned char hdr[44];
+    unsigned long sr   = nw->rate;
+    unsigned short ch  = (nw->ahiType == AHIST_S16S) ? 2 : 1;
+    unsigned long brate = sr * ch * 2UL;
+
+    if (!nw->prefs.capture[0]) return;          /* feature off */
+    {
+        struct ExecBase *SysBase = nw->SysBase;
+        nw->captureDOSBase = (struct DosLibrary *)
+            OpenLibrary((STRPTR)"dos.library", 0);
+    }
+    if (!nw->captureDOSBase) return;
+    DOSBase = nw->captureDOSBase;
+    nw->captureFh = Open((STRPTR)nw->prefs.capture, MODE_NEWFILE);
+    if (!nw->captureFh) {
+        struct ExecBase *SysBase = nw->SysBase;
+        CloseLibrary((struct Library *)nw->captureDOSBase);
+        nw->captureDOSBase = 0;
+        return;
+    }
+    /* RIFF header with placeholder sizes (patched in capture_finalize). */
+    hdr[0]='R'; hdr[1]='I'; hdr[2]='F'; hdr[3]='F';
+    put_u32_le(hdr + 4, 36);                    /* placeholder: 36 + data */
+    hdr[8]='W'; hdr[9]='A'; hdr[10]='V'; hdr[11]='E';
+    hdr[12]='f'; hdr[13]='m'; hdr[14]='t'; hdr[15]=' ';
+    put_u32_le(hdr + 16, 16);                   /* fmt chunk size */
+    put_u16_le(hdr + 20, 1);                    /* PCM */
+    put_u16_le(hdr + 22, ch);
+    put_u32_le(hdr + 24, sr);
+    put_u32_le(hdr + 28, brate);
+    put_u16_le(hdr + 32, (unsigned short)(ch * 2));
+    put_u16_le(hdr + 34, 16);
+    hdr[36]='d'; hdr[37]='a'; hdr[38]='t'; hdr[39]='a';
+    put_u32_le(hdr + 40, 0);                    /* placeholder */
+    Write(nw->captureFh, hdr, 44);
+    nw->captureBytes = 0;
+}
+
+/* Append `bytes` of LE PCM to the capture file; no-op if disabled. */
+static void capture_write(struct NW *nw, const unsigned char *data, long bytes)
+{
+    struct DosLibrary *DOSBase;
+    if (!nw->captureFh || bytes <= 0) return;
+    DOSBase = nw->captureDOSBase;
+    Write(nw->captureFh, (APTR)data, bytes);
+    nw->captureBytes += bytes;
+}
+
+/* Patch the RIFF/data sizes and close. Safe to call when capture is off. */
+static void capture_finalize(struct NW *nw)
+{
+    struct DosLibrary *DOSBase;
+    unsigned char le[4];
+    if (!nw->captureFh) {
+        if (nw->captureDOSBase) {
+            struct ExecBase *SysBase = nw->SysBase;
+            CloseLibrary((struct Library *)nw->captureDOSBase);
+            nw->captureDOSBase = 0;
+        }
+        return;
+    }
+    DOSBase = nw->captureDOSBase;
+    Seek(nw->captureFh, 4, OFFSET_BEGINNING);
+    put_u32_le(le, (unsigned long)(36 + nw->captureBytes));
+    Write(nw->captureFh, le, 4);
+    Seek(nw->captureFh, 40, OFFSET_BEGINNING);
+    put_u32_le(le, (unsigned long)nw->captureBytes);
+    Write(nw->captureFh, le, 4);
+    Close(nw->captureFh);
+    nw->captureFh = 0;
+    {
+        struct ExecBase *SysBase = nw->SysBase;
+        CloseLibrary((struct Library *)nw->captureDOSBase);
+    }
+    nw->captureDOSBase = 0;
+}
+
 static void ahi_submit(struct NW *nw, int i, long bytes)
 {
     struct ExecBase   *SysBase = nw->SysBase;
     struct AHIRequest *r = nw->ahiReq[i];
     smooth_buf(nw, nw->ahiBuf[i], bytes);  /* high-cut (LE) before the byte-swap */
+    if (nw->prefs.capture[0] && !nw->captureFh && !nw->captureDOSBase)
+        capture_open(nw);                  /* lazy: rate/channels known by now    */
+    capture_write(nw, nw->ahiBuf[i], bytes); /* tee LE PCM (no-op if disabled)    */
     swap16(nw->ahiBuf[i], bytes);          /* little-endian PCM -> AHI big-endian */
     r->ahir_Std.io_Command = CMD_WRITE;
     r->ahir_Std.io_Data    = nw->ahiBuf[i];
@@ -624,7 +734,8 @@ static void session_close(struct NW *s)
     struct ExecBase *SysBase;
     if (!s) return;
     SysBase = s->SysBase;
-    ahi_close(s);                        /* drain + free AHI */
+    ahi_close(s);                        /* drain + free AHI (last ahi_submits) */
+    capture_finalize(s);                 /* patch WAV sizes + close, if open    */
     session_disconnect(s);
     if (s->CodesetsBase) CloseLibrary(s->CodesetsBase);
     if (s->SocketBase)   CloseLibrary(s->SocketBase);
