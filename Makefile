@@ -126,6 +126,12 @@ $(BUILD)/amiga/failtest: $(SRCDIR)/failtest.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/failtest.c
 
+# filesave_probe: one-off investigation tool — single CMD_WRITE against an
+# AHI filesave unit, no link/streaming/Wyoming. clib2.
+$(BUILD)/amiga/filesave_probe: $(SRCDIR)/filesave_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/filesave_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)
