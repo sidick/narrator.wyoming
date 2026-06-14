@@ -34,7 +34,7 @@ static char g_voice[128]   = "";
 static char g_language[64] = "";
 static char g_speaker[32]  = "";
 static char g_out[256]     = "say.wav";
-static int  g_unit         = 0;        /* ahi.device unit (Amiga backend) */
+static unsigned long g_mode = 0x0002000fUL; /* AHI audio mode (Amiga backend) */
 
 static void set_str(char *dst, size_t n, const char *v)
 {
@@ -84,7 +84,7 @@ static int read_config(const char *path)
         else if (!strcmp(key, "speaker"))  set_str(g_speaker, sizeof g_speaker, val);
         else if (!strcmp(key, "wav") ||
                  !strcmp(key, "out"))      set_str(g_out, sizeof g_out, val);
-        else if (!strcmp(key, "ahi_unit")) g_unit = atoi(val);
+        else if (!strcmp(key, "audio_mode")) g_mode = strtoul(val, NULL, 0);
     }
     fclose(f);
     return got_host;
@@ -129,7 +129,7 @@ int main(int argc, char **argv)
     if (!buf) { net_cleanup(); return 1; }
 
     audio_set_outfile(g_out);
-    audio_set_unit(g_unit);
+    audio_set_mode(g_mode);
 
     printf("say -> %s:%d  text=\"%s\"\n", g_host, g_port, g_text);
 

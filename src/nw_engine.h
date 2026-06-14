@@ -23,9 +23,13 @@ struct nwprefs {
     char voice[64];          /* default voice (used if no sex-specific match) */
     char voice_male[64];
     char voice_female[64];
-    int  ahi_unit;           /* ahi.device unit to play through (default 0) — set
-                              * this to target a specific AHI mode/card when the
-                              * user has more than one unit configured */
+    unsigned long audio_mode;/* AHI audio mode ID (AHIA_AudioID) to play through.
+                              * Default 0x0002000f (paula HiFi 14 bit mono
+                              * calibrated — highest-quality paula mode that
+                              * works on real hardware). For Amiberry, 0x003b0002
+                              * (uaesnd HiFi Stereo) or 0x001a0000 (UAE 16 bit
+                              * HIFI Stereo++) measure cleaner. See
+                              * docs/audio-capture-rig.md. */
     int  split_words;        /* 0 = off (whole text in one request); >0 = split
                               * the text into pipelined chunks of ~this many
                               * words for faster time-to-first-audio on long
@@ -36,26 +40,13 @@ struct nwprefs {
                               * peaks -> harsh clipping; <100 leaves headroom so
                               * peaks no longer hit the ceiling. Lower it further
                               * if loud peaks still distort. */
-    int  smooth;             /* high-cut strength: 0 = off, N = cascade passes of
-                              * a (x+x_prev)/2 averager applied before AHI. Tames
-                              * the 8-11 kHz sibilance that AHI's resample + 8-bit
-                              * Paula turn harsh, while leaving speech body intact.
-                              * Default 2 (validated on-target); 1 is gentler. */
-    char capture[128];       /* if non-empty, also write the PCM stream as it's
-                              * handed to AHI (post-smooth, pre-byte-swap = the
-                              * little-endian samples Wyoming sent us, filtered)
-                              * to this AmigaDOS path as a WAV file. Spans one
-                              * device-task lifetime; one CMD_WRITE may concat
-                              * many synthesis chunks. Empty = capture off. */
-    char capture_raw[128];   /* if non-empty, ALSO write a SECOND WAV tap'd
-                              * earlier in the path: the raw little-endian PCM
-                              * Wyoming sent us, BEFORE smooth_buf and without
-                              * the per-utterance silence pre-roll. Same format
-                              * as `capture`; enable BOTH to A/B the smooth
-                              * filter's effect on a single Piper response
-                              * (which works around Piper's stochastic
-                              * prosody — fresh server runs are NOT
-                              * reproducible). Empty = off. */
+    char capture[128];       /* if non-empty, also write the raw little-endian PCM
+                              * Wyoming sent us to this AmigaDOS path as a WAV
+                              * file (no pre-roll silence; only actual data).
+                              * Spans one device-task lifetime; one CMD_WRITE may
+                              * concat many synthesis chunks. Empty = capture
+                              * off. Useful for the audio-quality investigation
+                              * rig in docs/audio-capture-rig.md. */
 };
 
 /* Fill *p with defaults, then overlay ENV:narrator.wyoming if present. */

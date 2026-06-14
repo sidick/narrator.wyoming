@@ -36,6 +36,7 @@
 #include <proto/exec.h>
 #include <proto/bsdsocket.h>
 #include <proto/dos.h>
+#include <proto/ahi.h>
 
 /* Optional: codesets.library for non-UTF-8 text input (ISO-8859-1 etc.).
  * Opened soft — if the library isn't installed, the engine falls back to
@@ -52,10 +53,6 @@
  * concurrently). Both are primed before playback starts so the first transition
  * is gapless. ~0.19s/buffer at 8K — small for low start latency. */
 #define AHIBUFSZ 8192
-
-/* Max passes of the high-cut averager (smooth_buf); each pass is one short of
- * persistent state. More than a few would over-dull speech anyway. */
-#define SMOOTH_MAX 4
 
 /* Graceful-failure timeouts (seconds): an unreachable server fails fast instead
  * of hanging on the OS TCP timeout, and a mid-stream stall doesn't block forever. */
@@ -102,34 +99,37 @@ struct NW {
     int   err;                  /* bsdsocket errno target (per context) */
     long  rpos, rlen;           /* socket read buffer cursor            */
 
-    /* AHI playback state (two ping-ponging buffers) */
-    struct MsgPort    *ahiPort;
-    struct AHIRequest *ahiReq[2];
-    unsigned char     *ahiBuf[2];
-    int   ahiOpened;
-    int   ahiQueued[2];
-    int   fill;                 /* buffer being filled */
-    long  fillpos;
-    int   primed;               /* both buffers submitted once (gapless start) */
-    int   prerolled;            /* silence pre-roll injected this utterance     */
+    /* AHI playback state (library interface — see commit log for rationale).
+     * We accumulate the whole utterance into a growing LE PCM buffer; ahi_drain
+     * byte-swaps it once, AHI_LoadSound + AHI_Play it, Delay()s for the actual
+     * duration, then resets ahiLen for the next utterance. AHI is opened lazily
+     * on first ahi_write and held across utterances. ahiBuf survives across
+     * utterances too, growing geometrically. AHIBase is the AHI library base
+     * (== ahiReq->ahir_Std.io_Device after OpenDevice); held here so we don't
+     * need a global. */
+    struct Library      *AHIBase;
+    struct DosLibrary   *ahiDOSBase;    /* held just for Delay() in ahi_drain */
+    struct MsgPort      *ahiPort;
+    struct AHIRequest   *ahiReq;
+    struct AHIAudioCtrl *ahiCtrl;
+    unsigned char       *ahiBuf;
+    long  ahiCap;               /* allocated bytes of ahiBuf                    */
+    long  ahiLen;               /* written bytes (this utterance, LE)            */
+    int   ahiOpened;            /* OpenDevice succeeded                          */
+    int   ahiAlloced;           /* AHI_AllocAudio succeeded                      */
+    int   prerolled;            /* this utterance already has silence pre-roll   */
     unsigned long rate;
-    int   ahiType;              /* AHIST_M16S / AHIST_S16S */
-    long  volume;               /* AHI ahir_Volume (Fixed 16.16) */
-    long  ahiUnit;              /* ahi.device unit (configurable; default 0)    */
-    long  ahiUnitOpen;          /* unit AHI is currently open on (-1 if closed) */
-    int   smooth;               /* high-cut passes (0=off); see smooth_buf       */
-    short smz[SMOOTH_MAX];      /* per-pass previous-sample state for the filter  */
+    int   ahiType;              /* AHIST_M16S / AHIST_S16S                       */
+    long  volume;               /* AHIP_Vol (Fixed 16.16)                        */
+    unsigned long ahiMode;      /* AHIA_AudioID to use (from prefs)              */
+    unsigned long ahiModeOpen;  /* mode currently allocated (0 if not)           */
 
-    /* PCM capture: optional WAV taps. captureFh holds the post-smooth/pre-swap
-     * stream (prefs.capture, tap inside ahi_submit). captureRawFh holds the raw
-     * pre-smooth Wyoming PCM (prefs.capture_raw, tap inside ahi_write — but only
-     * for real PCM data, not the silence pre-roll). DOSBase is shared between
-     * both; opened on whichever tap fires first, closed in session_close. */
+    /* PCM capture: optional WAV tap of the LE Wyoming PCM as it arrives (before
+     * byte-swap, no pre-roll silence). dos.library is opened on first write
+     * and released in session_close. */
     struct DosLibrary *captureDOSBase;
     BPTR  captureFh;            /* 0 = not open / disabled                       */
-    long  captureBytes;         /* data-chunk bytes written so far                */
-    BPTR  captureRawFh;
-    long  captureRawBytes;
+    long  captureBytes;         /* data bytes written so far                     */
 
     /* persistent-connection bookkeeping (the held endpoint) */
     char  chost[128];
@@ -254,12 +254,10 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
     copy_str(pr->voice,        (long)sizeof(pr->voice),        NW_DEFAULT_VOICE);
     copy_str(pr->voice_male,   (long)sizeof(pr->voice_male),   NW_DEFAULT_VOICE_MALE);
     copy_str(pr->voice_female, (long)sizeof(pr->voice_female), NW_DEFAULT_VOICE_FEMALE);
-    pr->ahi_unit = 0;          /* AHI_DEFAULT_UNIT */
+    pr->audio_mode = 0x0002000fUL;  /* paula HiFi 14 bit mono calibrated */
     pr->split_words = 0;       /* off by default = whole text in one request */
     pr->gain = 80;             /* % of full scale; <100 = headroom for hot peaks */
-    pr->smooth = 2;            /* high-cut: tame Paula-chain sibilance (validated) */
     pr->capture[0] = '\0';     /* capture off unless user sets a path             */
-    pr->capture_raw[0] = '\0';
 
     /* local named DOSBase so the proto/dos.h inlines (Open/Read/Close) use it */
     DOSBase = (struct DosLibrary *)OpenLibrary((STRPTR)"dos.library", 0);
@@ -271,31 +269,45 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
             if (buf) {
                 LONG n = Read(fh, buf, 2047);
                 if (n > 0) {
-                    char portstr[16], splitstr[16], unitstr[16], gainstr[16];
-                    char smoothstr[16];
+                    char portstr[16], splitstr[16], modestr[24], gainstr[16];
                     buf[n] = '\0';
-                    portstr[0] = '\0'; splitstr[0] = '\0'; unitstr[0] = '\0';
-                    gainstr[0] = '\0'; smoothstr[0] = '\0';
+                    portstr[0] = '\0'; splitstr[0] = '\0'; modestr[0] = '\0';
+                    gainstr[0] = '\0';
                     pref_get(buf, "host", pr->host, (long)sizeof(pr->host));
                     pref_get(buf, "port", portstr, (long)sizeof(portstr));
                     pref_get(buf, "voice", pr->voice, (long)sizeof(pr->voice));
                     pref_get(buf, "voice_male", pr->voice_male, (long)sizeof(pr->voice_male));
                     pref_get(buf, "voice_female", pr->voice_female, (long)sizeof(pr->voice_female));
-                    pref_get(buf, "ahi_unit", unitstr, (long)sizeof(unitstr));
+                    pref_get(buf, "audio_mode", modestr, (long)sizeof(modestr));
                     pref_get(buf, "split_words", splitstr, (long)sizeof(splitstr));
                     pref_get(buf, "gain", gainstr, (long)sizeof(gainstr));
-                    pref_get(buf, "smooth", smoothstr, (long)sizeof(smoothstr));
                     pref_get(buf, "capture", pr->capture, (long)sizeof(pr->capture));
-                    pref_get(buf, "capture_raw", pr->capture_raw, (long)sizeof(pr->capture_raw));
                     if (portstr[0]) {
                         long v = 0; const char *q = portstr;
                         while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
                         if (v > 0) pr->port = (int)v;
                     }
-                    if (unitstr[0]) {
-                        long v = 0; const char *q = unitstr;
-                        while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
-                        pr->ahi_unit = (int)v;           /* 0 = AHI_DEFAULT_UNIT */
+                    if (modestr[0]) {
+                        /* Parse hex (0x... or 0X...) or decimal. */
+                        unsigned long v = 0; const char *q = modestr;
+                        if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X')) {
+                            q += 2;
+                            while ((*q >= '0' && *q <= '9') ||
+                                   (*q >= 'a' && *q <= 'f') ||
+                                   (*q >= 'A' && *q <= 'F')) {
+                                int d = (*q <= '9') ? (*q - '0') :
+                                        (*q <= 'F') ? (*q - 'A' + 10) :
+                                                      (*q - 'a' + 10);
+                                v = (v << 4) | (unsigned long)d;
+                                q++;
+                            }
+                        } else {
+                            while (*q >= '0' && *q <= '9') {
+                                v = v * 10 + (unsigned long)(*q - '0');
+                                q++;
+                            }
+                        }
+                        if (v != 0) pr->audio_mode = v;
                     }
                     if (splitstr[0]) {
                         long v = 0; const char *q = splitstr;
@@ -309,11 +321,6 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
                         if (v > 100) v = 100;            /* no boost above unity  */
                         pr->gain = (int)v;
                     }
-                    if (smoothstr[0]) {
-                        long v = 0; const char *q = smoothstr;
-                        while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
-                        pr->smooth = (int)v;             /* 0 = off; clamped at use */
-                    }
                 }
                 FreeMem(buf, 2048);
             }
@@ -323,12 +330,21 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
     CloseLibrary((struct Library *)DOSBase);
 }
 
-/* ---- AHI double-buffered playback (contextual port of audio_ahi.c) ---- */
+/* ---- AHI library-interface playback (buffered) ----
+ *
+ * The previous version used ahi.device CMD_WRITE on a numbered unit with
+ * ahir_Link ping-pong for gapless streaming. Per the measurements in
+ * docs/audio-capture-rig.md, that path inherits whatever audio mode the user
+ * has on unit 0 (typically "Paula: Fast 8 bit mono" — the worst-quality
+ * option) and produced harsh >11 kHz aliasing on speaker-out. The library
+ * interface lets us pick the mode explicitly via AHIA_AudioID; this version
+ * accumulates the whole utterance and plays it via AHI_Play at ahi_drain
+ * time. The first-audio latency goes up (we wait for the whole Wyoming
+ * response before any audio comes out), but the mode is now ours to choose
+ * and the playback path is the one Play16 and other well-behaved AHI
+ * consumers use.
+ */
 
-/* Piper/Wyoming PCM is 16-bit signed LITTLE-endian; AHI (AHIST_M16S) wants the
- * Amiga's native BIG-endian order. Swap each sample in place before playback,
- * or it plays as static. Buffer boundaries are even (AHIBUFSZ even, totals
- * even), so samples never straddle a submitted buffer. */
 static void swap16(unsigned char *b, long n)
 {
     long i;
@@ -337,40 +353,13 @@ static void swap16(unsigned char *b, long n)
     }
 }
 
-/* Gentle high-cut applied to the still-little-endian 16-bit PCM before swap16.
- * A cascade of N one-tap averagers y[n] = (x[n] + x[n-1]) / 2: a null at Nyquist
- * (~-8 dB at 8 kHz, ~-0.7 dB at 2.7 kHz), so it tames the 8-11 kHz sibilance
- * that AHI's resample + 8-bit Paula make harsh, while leaving the speech body
- * intact. No coeffs, no trig, no float, and (a+b)>>1 of two int16s can't overflow
- * — friendly to the freestanding -nostdlib device. State persists across buffers
- * (submitted in playback order), so the filter is continuous within a session. */
-static void smooth_buf(struct NW *nw, unsigned char *b, long bytes)
-{
-    int passes = nw->smooth, p;
-    long i;
-    if (passes <= 0) return;
-    if (passes > SMOOTH_MAX) passes = SMOOTH_MAX;
-    for (i = 0; i + 1 < bytes; i += 2) {
-        int s = (int)(short)(b[i] | (b[i + 1] << 8));   /* decode LE signed 16 */
-        for (p = 0; p < passes; p++) {
-            int avg = (s + (int)nw->smz[p]) >> 1;       /* (x + x_prev) / 2     */
-            nw->smz[p] = (short)s;                      /* this pass's input    */
-            s = avg;                                    /* feeds the next pass  */
-        }
-        b[i]     = (unsigned char)(s & 0xff);           /* re-encode LE         */
-        b[i + 1] = (unsigned char)((s >> 8) & 0xff);
-    }
-}
-
-/* ---- optional WAV capture (tee of the PCM in our pipeline) ----
+/* ---- optional WAV capture (tee of the LE PCM Wyoming sends us) ----
  *
- * Two independent taps share one dos.library open: `capture` records the
- * post-smooth/pre-byte-swap PCM we hand AHI (tap in ahi_submit), `capture_raw`
- * records the raw pre-smooth Wyoming PCM (tap in ahi_write, real-data calls
- * only). Format mirrors Wyoming's: rate/channels from the AHI session, 16-bit
- * LE. Header skeleton is written lazily on first sample; chunk sizes are
- * patched in session_close. Best-effort: dos.library/Open failure leaves the
- * tap silently disabled.
+ * One tap, `capture`, taps in ahi_write when data != NULL — i.e. real Wyoming
+ * PCM only, not the per-utterance silence pre-roll. Format mirrors Wyoming's
+ * (mono 16-bit LE at the session rate); header skeleton written lazily on
+ * first sample, RIFF/data sizes patched in session_close. Best-effort:
+ * dos.library / Open() failure leaves the tap silently disabled.
  */
 
 static void put_u16_le(unsigned char *p, unsigned short v)
@@ -466,169 +455,152 @@ static void capture_close_dos(struct NW *nw)
     nw->captureDOSBase = 0;
 }
 
-static void ahi_submit(struct NW *nw, int i, long bytes)
-{
-    struct ExecBase   *SysBase = nw->SysBase;
-    struct AHIRequest *r = nw->ahiReq[i];
-    smooth_buf(nw, nw->ahiBuf[i], bytes);  /* high-cut (LE) before the byte-swap */
-    capture_open(nw, nw->prefs.capture, &nw->captureFh, &nw->captureBytes);
-    capture_write(nw, nw->captureFh, &nw->captureBytes, nw->ahiBuf[i], bytes);
-    swap16(nw->ahiBuf[i], bytes);          /* little-endian PCM -> AHI big-endian */
-    r->ahir_Std.io_Command = CMD_WRITE;
-    r->ahir_Std.io_Data    = nw->ahiBuf[i];
-    r->ahir_Std.io_Length  = (ULONG)bytes;
-    r->ahir_Std.io_Offset  = 0;
-    r->ahir_Frequency      = nw->rate;
-    r->ahir_Type           = nw->ahiType;
-    r->ahir_Volume         = (Fixed)nw->volume;
-    r->ahir_Position       = 0x8000;
-    r->ahir_Link           = nw->ahiQueued[1 - i] ? nw->ahiReq[1 - i] : 0;  /* gapless */
-    SendIO((struct IORequest *)r);
-    nw->ahiQueued[i] = 1;
-}
-
-static void ahi_wait_free(struct NW *nw, int i)
+/* Grow nw->ahiBuf so it can hold `need` bytes. Returns 0 on success. */
+static int ahi_buf_grow(struct NW *nw, long need)
 {
     struct ExecBase *SysBase = nw->SysBase;
-    if (nw->ahiQueued[i]) {
-        WaitIO((struct IORequest *)nw->ahiReq[i]);
-        nw->ahiQueued[i] = 0;
+    long new_cap;
+    unsigned char *new_buf;
+    if (need <= nw->ahiCap) return 0;
+    new_cap = nw->ahiCap ? nw->ahiCap : 32768;
+    while (new_cap < need) new_cap *= 2;
+    new_buf = (unsigned char *)AllocMem((ULONG)new_cap, MEMF_PUBLIC);
+    if (!new_buf) return -1;
+    if (nw->ahiBuf) {
+        if (nw->ahiLen > 0)
+            CopyMem(nw->ahiBuf, new_buf, (ULONG)nw->ahiLen);
+        FreeMem(nw->ahiBuf, (ULONG)nw->ahiCap);
     }
+    nw->ahiBuf = new_buf;
+    nw->ahiCap = new_cap;
+    return 0;
 }
 
 static int ahi_open(struct NW *nw, long rate, long width, long channels)
 {
     struct ExecBase *SysBase = nw->SysBase;
+    struct Library  *AHIBase;     /* local so proto/ahi.h inlines pick it up */
     if (width != 2) return -1;
-    nw->rate     = (unsigned long)rate;
-    nw->ahiType  = (channels >= 2) ? AHIST_S16S : AHIST_M16S;
-    nw->fill     = 0;
-    nw->fillpos  = 0;
-    nw->primed   = 0;
+    nw->rate      = (unsigned long)rate;
+    nw->ahiType   = (channels >= 2) ? AHIST_S16S : AHIST_M16S;
+    nw->ahiLen    = 0;
     nw->prerolled = 0;
-    nw->ahiQueued[0] = nw->ahiQueued[1] = 0;
-    { int k; for (k = 0; k < SMOOTH_MAX; k++) nw->smz[k] = 0; }  /* fresh filter */
+
+    if (ahi_buf_grow(nw, 32768) != 0) return -1;
 
     nw->ahiPort = CreateMsgPort();
     if (!nw->ahiPort) return -1;
-    nw->ahiReq[0] = (struct AHIRequest *)CreateIORequest(nw->ahiPort, sizeof(struct AHIRequest));
-    if (!nw->ahiReq[0]) return -1;
-    nw->ahiReq[0]->ahir_Version = 4;
-    if (OpenDevice((STRPTR)"ahi.device", (ULONG)nw->ahiUnit,
-                   (struct IORequest *)nw->ahiReq[0], 0) != 0)
+    nw->ahiReq = (struct AHIRequest *)CreateIORequest(nw->ahiPort,
+                                                     sizeof(struct AHIRequest));
+    if (!nw->ahiReq) return -1;
+    nw->ahiReq->ahir_Version = 4;
+
+    if (OpenDevice((STRPTR)"ahi.device", AHI_NO_UNIT,
+                   (struct IORequest *)nw->ahiReq, 0) != 0)
         return -1;
     nw->ahiOpened = 1;
-    nw->ahiUnitOpen = nw->ahiUnit;
-    nw->ahiReq[1] = (struct AHIRequest *)AllocMem((ULONG)sizeof(struct AHIRequest),
-                                                  MEMF_PUBLIC | MEMF_CLEAR);
-    if (!nw->ahiReq[1]) return -1;
-    CopyMem(nw->ahiReq[0], nw->ahiReq[1], (ULONG)sizeof(struct AHIRequest));
-    nw->ahiBuf[0] = (unsigned char *)AllocMem(AHIBUFSZ, MEMF_PUBLIC);
-    nw->ahiBuf[1] = (unsigned char *)AllocMem(AHIBUFSZ, MEMF_PUBLIC);
-    if (!nw->ahiBuf[0] || !nw->ahiBuf[1]) return -1;
+    nw->AHIBase   = (struct Library *)nw->ahiReq->ahir_Std.io_Device;
+    AHIBase       = nw->AHIBase;
+
+    /* dos.library held for the AHI session, used by ahi_drain's Delay(). */
+    nw->ahiDOSBase = (struct DosLibrary *)
+        OpenLibrary((STRPTR)"dos.library", 0);
+    if (!nw->ahiDOSBase) return -1;
+
+    nw->ahiCtrl = AHI_AllocAudio(
+        AHIA_AudioID,  nw->ahiMode,
+        AHIA_MixFreq,  nw->rate,
+        AHIA_Channels, 1UL,
+        AHIA_Sounds,   1UL,
+        TAG_END);
+    if (!nw->ahiCtrl) return -1;
+    nw->ahiAlloced  = 1;
+    nw->ahiModeOpen = nw->ahiMode;
     return 0;
 }
 
-/* Feed PCM (or, when data == NULL, silence) into the double-buffer. A NULL
- * source zero-fills instead of copying — used for the per-utterance pre-roll. */
+/* Append PCM (or, when data == NULL, silence) to the utterance accumulator.
+ * `capture` taps the LE bytes — but only when data is non-NULL (the silence
+ * pre-roll is excluded from the capture file by design). */
 static void ahi_write(struct NW *nw, const unsigned char *data, long len)
 {
-    struct ExecBase *SysBase = nw->SysBase;   /* for CopyMem */
-    while (len > 0) {
-        long space = AHIBUFSZ - nw->fillpos;
-        long take  = len < space ? len : space;
-        unsigned char *dst = nw->ahiBuf[nw->fill] + nw->fillpos;
-        if (data) {
-            /* Tee raw Wyoming PCM here (silence pre-roll has data==NULL, so
-             * it's already excluded from this branch). Lazy file open: rate
-             * and channels are known by now from ahi_open. */
-            capture_open(nw, nw->prefs.capture_raw,
-                         &nw->captureRawFh, &nw->captureRawBytes);
-            capture_write(nw, nw->captureRawFh, &nw->captureRawBytes,
-                          data, take);
-            CopyMem((APTR)data, dst, (ULONG)take); data += take;
-        }
-        else { /* silence; volatile so GCC can't fold it into a memset() we
-                * don't link (-nostdlib) */
-            volatile unsigned char *z = dst; long k;
-            for (k = 0; k < take; k++) z[k] = 0;
-        }
-        nw->fillpos += take;
-        len         -= take;
-        if (nw->fillpos == AHIBUFSZ) {           /* current buffer full */
-            if (!nw->primed) {
-                /* Fill buffer 0, then buffer 1, then submit BOTH back-to-back so
-                 * the 0->1 transition is gapless (buffer 1 already queued). */
-                if (nw->fill == 0) {
-                    nw->fill = 1; nw->fillpos = 0;   /* hold 0, fill 1 */
-                } else {
-                    ahi_submit(nw, 0, AHIBUFSZ);     /* link NULL -> plays now  */
-                    ahi_submit(nw, 1, AHIBUFSZ);     /* link req0 -> gapless     */
-                    nw->primed = 1;
-                    nw->fill = 0;
-                    ahi_wait_free(nw, 0);            /* reclaim 0 to refill      */
-                    nw->fillpos = 0;
-                }
-            } else {
-                int other = 1 - nw->fill;
-                ahi_submit(nw, nw->fill, AHIBUFSZ);
-                ahi_wait_free(nw, other);
-                nw->fill    = other;
-                nw->fillpos = 0;
-            }
-        }
+    struct ExecBase *SysBase = nw->SysBase;
+    if (len <= 0) return;
+    if (ahi_buf_grow(nw, nw->ahiLen + len) != 0) return;
+    if (data) {
+        CopyMem((APTR)data, nw->ahiBuf + nw->ahiLen, (ULONG)len);
+        capture_open(nw, nw->prefs.capture, &nw->captureFh, &nw->captureBytes);
+        capture_write(nw, nw->captureFh, &nw->captureBytes, data, len);
+    } else {
+        /* silence; volatile so gcc can't fold this into a memset() we
+         * don't link against (-nostdlib). */
+        volatile unsigned char *z = nw->ahiBuf + nw->ahiLen;
+        long k;
+        for (k = 0; k < len; k++) z[k] = 0;
     }
+    nw->ahiLen += len;
 }
 
-/* Finish the current utterance: flush whatever is buffered, wait for playback to
- * drain, but KEEP AHI open for the next utterance. Resets the fill state. */
+/* End of an utterance: byte-swap, AHI_LoadSound + AHI_Play the accumulator,
+ * Delay() for the actual audio duration, then reset for the next utterance.
+ * Keeps the AHIAudioCtrl alive across utterances. */
 static void ahi_drain(struct NW *nw)
 {
-    if (!nw->ahiOpened) return;
-    /* Post-roll: a little trailing silence so the channel-stop click lands on
-     * silence, and voices with almost no built-in trailing silence (e.g.
-     * en_US-ryan-high) don't lose their final moment. */
+    struct Library    *AHIBase = nw->AHIBase;
+    struct DosLibrary *DOSBase = nw->ahiDOSBase;
+    struct AHISampleInfo si;
+    long  duration_ticks;
+
+    if (!nw->ahiAlloced || nw->ahiLen <= 0) {
+        nw->prerolled = 0;
+        return;
+    }
+
+    /* Brief trailing silence so the channel-stop click lands on silence. */
     if (nw->prerolled)
         ahi_write(nw, 0, ((long)nw->rate >> 4) * 2);   /* ~64ms */
-    if (!nw->primed) {
-        /* utterance ended before pre-roll completed (< 2 full buffers) */
-        if (nw->fill == 1) {                 /* buf0 full + held, buf1 partial */
-            ahi_submit(nw, 0, AHIBUFSZ);
-            if (nw->fillpos > 0) ahi_submit(nw, 1, nw->fillpos);
-        } else if (nw->fillpos > 0) {         /* only a partial buf0 */
-            ahi_submit(nw, 0, nw->fillpos);
-        }
-    } else if (nw->fillpos > 0) {
-        ahi_submit(nw, nw->fill, nw->fillpos);
+
+    swap16(nw->ahiBuf, nw->ahiLen);
+    si.ahisi_Type    = nw->ahiType;
+    si.ahisi_Address = nw->ahiBuf;
+    si.ahisi_Length  = nw->ahiLen;
+    if (AHI_LoadSound(0, AHIST_SAMPLE, &si, nw->ahiCtrl) == 0
+     && AHI_ControlAudio(nw->ahiCtrl, AHIC_Play, TRUE, TAG_END) == 0) {
+        AHI_Play(nw->ahiCtrl,
+                 AHIP_BeginChannel, 0UL,
+                 AHIP_Freq,         nw->rate,
+                 AHIP_Vol,          (ULONG)nw->volume,
+                 AHIP_Pan,          0x8000UL,
+                 AHIP_Sound,        0UL,
+                 AHIP_EndChannel,   0UL,
+                 TAG_END);
+
+        /* samples / rate seconds, +25 ticks (0.5s) of safety margin. */
+        duration_ticks = (long)(((nw->ahiLen / 2) * 50UL) / nw->rate) + 25;
+        Delay((LONG)duration_ticks);
+
+        AHI_ControlAudio(nw->ahiCtrl, AHIC_Play, FALSE, TAG_END);
+        AHI_UnloadSound(0, nw->ahiCtrl);
     }
-    ahi_wait_free(nw, 0);
-    ahi_wait_free(nw, 1);
-    nw->primed    = 0;
-    nw->prerolled = 0;          /* next utterance pre-rolls again (channel idle) */
-    nw->fill      = 0;
-    nw->fillpos   = 0;
+
+    nw->ahiLen    = 0;
+    nw->prerolled = 0;
 }
 
 static void ahi_close(struct NW *nw)
 {
     struct ExecBase *SysBase = nw->SysBase;
-    if (nw->ahiOpened) {
-        if (nw->fillpos > 0) ahi_submit(nw, nw->fill, nw->fillpos);
-        ahi_wait_free(nw, 0);
-        ahi_wait_free(nw, 1);
-    }
-    if (nw->ahiBuf[0]) FreeMem(nw->ahiBuf[0], AHIBUFSZ);
-    if (nw->ahiBuf[1]) FreeMem(nw->ahiBuf[1], AHIBUFSZ);
-    if (nw->ahiReq[1]) FreeMem(nw->ahiReq[1], (ULONG)sizeof(struct AHIRequest));
-    if (nw->ahiOpened) CloseDevice((struct IORequest *)nw->ahiReq[0]);
-    if (nw->ahiReq[0]) DeleteIORequest((struct IORequest *)nw->ahiReq[0]);
-    if (nw->ahiPort)   DeleteMsgPort(nw->ahiPort);
-    /* Reset so ahi_open can re-run (e.g. the unit changed at runtime). */
-    nw->ahiBuf[0] = nw->ahiBuf[1] = 0;
-    nw->ahiReq[0] = nw->ahiReq[1] = 0;
-    nw->ahiPort = 0;
-    nw->ahiOpened = 0;
-    nw->ahiUnitOpen = -1;
+    struct Library  *AHIBase = nw->AHIBase;
+    if (nw->ahiLen > 0) ahi_drain(nw);
+
+    if (nw->ahiAlloced)  { AHI_FreeAudio(nw->ahiCtrl); nw->ahiCtrl = 0; nw->ahiAlloced = 0; }
+    if (nw->ahiBuf)      { FreeMem(nw->ahiBuf, (ULONG)nw->ahiCap); nw->ahiBuf = 0; nw->ahiCap = 0; }
+    if (nw->ahiOpened)   { CloseDevice((struct IORequest *)nw->ahiReq); nw->ahiOpened = 0; }
+    if (nw->ahiReq)      { DeleteIORequest((struct IORequest *)nw->ahiReq); nw->ahiReq = 0; }
+    if (nw->ahiPort)     { DeleteMsgPort(nw->ahiPort); nw->ahiPort = 0; }
+    if (nw->ahiDOSBase)  { CloseLibrary((struct Library *)nw->ahiDOSBase); nw->ahiDOSBase = 0; }
+    nw->AHIBase     = 0;
+    nw->ahiModeOpen = 0;
 }
 
 /* ---- socket I/O (buffered) ---- */
@@ -721,7 +693,7 @@ static struct NW *session_create(struct ExecBase *SysBase)
     s->SysBase = SysBase;
     s->sock = -1;
     s->cport = -1;
-    s->ahiUnitOpen = -1;        /* AHI not yet opened on any unit */
+    s->ahiModeOpen = 0;         /* AHI not yet opened with any mode */
     s->SocketBase = OpenLibrary((STRPTR)"bsdsocket.library", 4);
     if (!s->SocketBase) { FreeMem(s, (ULONG)sizeof(struct NW)); return 0; }
     {
@@ -754,9 +726,8 @@ static void session_close(struct NW *s)
     struct ExecBase *SysBase;
     if (!s) return;
     SysBase = s->SysBase;
-    ahi_close(s);                        /* drain + free AHI (last ahi_submits) */
-    capture_finalize(s, &s->captureFh,    s->captureBytes);
-    capture_finalize(s, &s->captureRawFh, s->captureRawBytes);
+    ahi_close(s);                        /* drain + free AHI */
+    capture_finalize(s, &s->captureFh, s->captureBytes);
     capture_close_dos(s);
     session_disconnect(s);
     if (s->CodesetsBase) CloseLibrary(s->CodesetsBase);
@@ -1108,9 +1079,9 @@ static long session_send_recv(struct NW *s, const char *text, long textlen,
 
             if (find_int(hdr, "payload_length", &pay_len) && pay_len > 0) {
                 long got;
-                /* If AHI is held open on a different unit than the prefs now
-                 * ask for, close it so it reopens on the configured unit. */
-                if (s->ahiOpened && s->ahiUnitOpen != s->ahiUnit)
+                /* If AHI is held open with a different audio mode than the
+                 * prefs now ask for, close it so it reopens on the new mode. */
+                if (s->ahiOpened && s->ahiModeOpen != s->ahiMode)
                     ahi_close(s);
                 if (!s->ahiOpened && rate && width && channels)
                     ahi_open(s, rate, width, channels);
@@ -1275,8 +1246,7 @@ static void nw_dev_task(void)
      * CMD_WRITEs read sess->prefs directly — no per-write disk hit. */
     if (sess) {
         nw_read_prefs(SysBase, &sess->prefs);
-        sess->ahiUnit = sess->prefs.ahi_unit;
-        sess->smooth  = sess->prefs.smooth;
+        sess->ahiMode = sess->prefs.audio_mode;
     }
 
     ctx->cmdPort = port;                 /* publish (single aligned write, atomic) */
