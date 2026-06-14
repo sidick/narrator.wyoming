@@ -139,6 +139,13 @@ $(BUILD)/amiga/filesave_lib_probe: $(SRCDIR)/filesave_lib_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/filesave_lib_probe.c
 
+# ahi_capture: replay a captured WAV through AHI library-interface filesave
+# to produce an AIFF of the AHI MIXER's output (audio-quality investigation;
+# does NOT capture paula.audio's downstream effect). clib2.
+$(BUILD)/amiga/ahi_capture: $(SRCDIR)/ahi_capture.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/ahi_capture.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)
