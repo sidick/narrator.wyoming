@@ -155,6 +155,13 @@ $(BUILD)/amiga/paula_lib_probe: $(SRCDIR)/paula_lib_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/paula_lib_probe.c
 
+# paula_11025_probe: like paula_lib_probe but downsamples the source from
+# 22050 -> 11025 (anti-aliased 2:1 decimation) before playback, to test
+# whether feeding paula a half-rate source reduces the >11 kHz aliasing.
+$(BUILD)/amiga/paula_11025_probe: $(SRCDIR)/paula_11025_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/paula_11025_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)

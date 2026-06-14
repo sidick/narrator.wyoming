@@ -174,15 +174,27 @@ measured.
    has less to be aliased up. Sample-rate-dependent: smooth that nulls
    at 22050/2 doesn't shape the band we care about (5-11 kHz). Worth
    trying anyway.
-3. **Ask Piper for 11025 Hz output** — half the sample rate means the
-   chain has nothing above 5.5 kHz to alias upward. Sounds duller but
-   the harsh sibilance band is gone by physics. Trivial change on the
-   server side. Best if the listener cares about clarity over fidelity.
-4. **Enumerate paula modes** — we only tested two paula modes
+3. **Enumerate paula modes** — we only tested two paula modes
    (0x0002000c and 0x00020018) and they were indistinguishable. The
    PAULA AudioMode file is 2 KB (vs FILESAVE's 800 B) so it has many
    more modes. Worth running the probe against each before giving up
    on AHI.
+
+### Confirmed not to help
+
+- **Lowering source rate to 11025 Hz** — we tested this empirically by
+  downsampling 22050 -> 11025 with anti-aliased 2:1 decimation
+  (`paula_11025_probe.c`) and playing through the same AHI/paula
+  chain. The result was DRAMATICALLY worse: the aliasing bands went
+  from 91/67 RMS at 22050 to 277/211 at 11025, with 2-11 kHz energy
+  +5 to +9 dB above the source's reference. The chain's upsample from
+  11025 back to its internal rate is almost certainly zero-order hold
+  (sample-and-hold), which mirrors the source spectrum around the
+  source Nyquist (5512.5 Hz) and pushes all 0-5.5 kHz content into the
+  5.5-11 kHz band as spectral images. Those then alias further into
+  11-20 kHz. Lesson: the chain is bad at both downsample AND upsample.
+  Asking Piper for 11025 output would have the same problem; do not
+  pursue.
 
 ## Reproduction quick-script
 
