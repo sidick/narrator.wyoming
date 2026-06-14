@@ -149,7 +149,7 @@ void audio_close(void)
         swap16(g_buf, g_len);
         si.ahisi_Type    = g_type;
         si.ahisi_Address = g_buf;
-        si.ahisi_Length  = g_len;
+        si.ahisi_Length  = g_len;       /* bytes (matches the working probes) */
 
         if (AHI_LoadSound(0, AHIST_SAMPLE, &si, g_ctrl) == 0
          && AHI_ControlAudio(g_ctrl, AHIC_Play, TRUE, TAG_END) == 0) {

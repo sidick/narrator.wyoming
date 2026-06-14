@@ -563,7 +563,7 @@ static void ahi_drain(struct NW *nw)
     swap16(nw->ahiBuf, nw->ahiLen);
     si.ahisi_Type    = nw->ahiType;
     si.ahisi_Address = nw->ahiBuf;
-    si.ahisi_Length  = nw->ahiLen;
+    si.ahisi_Length  = nw->ahiLen;      /* bytes (matches the working probes) */
     if (AHI_LoadSound(0, AHIST_SAMPLE, &si, nw->ahiCtrl) == 0
      && AHI_ControlAudio(nw->ahiCtrl, AHIC_Play, TRUE, TAG_END) == 0) {
         AHI_Play(nw->ahiCtrl,

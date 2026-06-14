@@ -35,12 +35,20 @@ Recording: start ffmpeg *before* launching Amiberry so the boot delay is
 captured as leading silence (the analysis tools trim it):
 
 ```sh
-ffmpeg -y -f avfoundation -i ":4" -ac 1 -ar 44100 -t 60 blackhole.wav 2>blackhole.ffmpeg.log
+ffmpeg -y -f avfoundation -i ":N" -ac 1 -ar 44100 -t 60 blackhole.wav 2>blackhole.ffmpeg.log
 ```
 
-The **44.1 kHz** rate is important — it preserves 11-22 kHz content, the
-band the harsh sibilance lives in. Recording at 22050 Hz throws away
-exactly the bin you want to see.
+**Always look up `N` fresh** with `ffmpeg -f avfoundation -list_devices true -i ""` —
+avfoundation device numbers are unstable across sessions (plugging in
+a USB camera, restarting CoreAudio, etc. shifts the indices). Using a
+stale index silently captures the wrong device (typically a microphone
+that picks up the ambient room sound). The spectrum will look like
+"noise" with no obvious silence between speech and background — that's
+the pattern to recognise, and the fix is to re-run the device list.
+
+The **44.1 kHz** rate is important — it preserves 11-22 kHz content,
+the band the harsh sibilance lives in. Recording at 22050 Hz throws
+away exactly the bin you want to see.
 
 Per-utterance prefs:
 
