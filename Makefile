@@ -203,6 +203,14 @@ $(BUILD)/amiga/oneshot_stream_probe: $(SRCDIR)/oneshot_stream_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/oneshot_stream_probe.c
 
+# becap_play_probe: reads Narrator:saytest.becap (BE PCM dumped by saytest's
+# debug capture tap) and plays via AHI as a static AHIST_SAMPLE one-shot.
+# Isolates the speech-content click investigation from saytest's streaming
+# path — same code shape as oneshot_stream_probe (which was clean for sine).
+$(BUILD)/amiga/becap_play_probe: $(SRCDIR)/becap_play_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/becap_play_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)

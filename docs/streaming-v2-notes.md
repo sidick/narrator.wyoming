@@ -277,9 +277,52 @@ the buffer naturally caps how much we accept, we still don't run
 away. For very long playbacks we either grow the buffer at
 `audio_open` or fall back to v1's blocking semantics.
 
-## Recommended next move
+## Step 6 — integration into `audio_ahi.c`, plus the click finding
 
-Integration into `audio_ahi.c`. Probe code goes away once the design
-is in production. Stretch goal: `nw_engine.c` port (with `__saveds`
-attribute on any callback if needed under `-fbaserel`). v1's
-implementation stays in version-controlled history as a fallback.
+`audio_ahi.c` v2 integration: 512 KB DYNAMICSAMPLE buffer at
+`audio_open`, atomic per-sample LE→BE swap via `copy_swap16` in
+`audio_write`, `AHI_Play` deferred to first write after the head
+start (~370 ms / 32 KB), `audio_close` Delays the full audio
+duration as an upper bound before `AHIC_Play FALSE`. Works on-target
+under saytest.
+
+### Click investigation (a separate downstream issue, not v2-specific)
+
+While verifying v2 on-target, the speech playback had a small
+periodic clicking through it. Spent a session A/B-ing to find the
+source:
+
+| Test                                              | Result   |
+|---------------------------------------------------|----------|
+| Host replay of the exact BE PCM (saytest.becap)   | **CLEAN** |
+| v2 streaming (paula HiFi 14-bit cal)              | clicks   |
+| v2 streaming (uaesnd 0x003b0002)                  | clicks   |
+| v2 buffered (DYNAMICSAMPLE, write-then-play)      | clicks   |
+| v1-style buffered (AHIST_SAMPLE, exact length)    | clicks   |
+| becap_play_probe (static AHIST_SAMPLE, no audio_ahi.c, no streaming) | clicks |
+| oneshot_stream_probe (DYNAMICSAMPLE + sine)       | clean    |
+
+The bytes our code feeds AHI are correct (host replay is clean). All
+playback paths through AHI/Amiberry click on speech. Synthetic sine
+doesn't click. So the click is content-dependent and downstream of
+our PCM — somewhere in AHI's mixer, paula's encoding, Amiberry's
+audio emulation, or BlackHole capture timing. Not fixable in
+`audio_ahi.c`.
+
+**Not a v2 regression — v1 (buffered, AHIST_SAMPLE) clicks the same
+way. v2 ships with the same audio quality as v1 and earns the
+streaming-latency win.** The click investigation is a separate
+follow-up; first hypothesis is AHI's 22050 Hz mix resampling. Try:
+`AHIA_MixFreq = 44100` (or a paula-native rate like 28867), or a
+different `AHIA_AudioID` family entirely (e.g. AHI v6 driver-side
+modes). `src/becap_play_probe.c` is the regression rig for this —
+run with whatever PCM/mode and listen via BlackHole.
+
+## Future work
+
+- `nw_engine.c` port (with `__saveds` on any callback under
+  `-fbaserel`). The narrator.device path currently uses the v1
+  pattern; porting it to v2 brings the latency win to Say-style
+  callers. Plain code change once the design above is settled.
+- Click investigation when there's time. Probably an AHI mode /
+  resampling thing; `becap_play_probe` is a fast iteration loop.
