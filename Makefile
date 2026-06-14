@@ -132,6 +132,13 @@ $(BUILD)/amiga/filesave_probe: $(SRCDIR)/filesave_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/filesave_probe.c
 
+# filesave_lib_probe: companion probe using AHI library interface
+# (AHI_AllocAudio + AHI_LoadSound + AHI_Play) — the supported consumer for
+# the filesave driver. clib2.
+$(BUILD)/amiga/filesave_lib_probe: $(SRCDIR)/filesave_lib_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/filesave_lib_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)
