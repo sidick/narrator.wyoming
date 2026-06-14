@@ -185,6 +185,15 @@ $(BUILD)/amiga/dynamic_probe: $(SRCDIR)/dynamic_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/dynamic_probe.c
 
+# stream_probe: incremental write-ahead-of-play-head streaming on top of
+# the DYNAMICSAMPLE ring (the realistic producer pattern, not bulk swap
+# like dynamic_probe). Writes 30 chunks of synthetic 440/880/440 sine,
+# paced by Delay; if it works, the same pattern of pitch transitions
+# shows up in the BlackHole capture but progressive, not block-shaped.
+$(BUILD)/amiga/stream_probe: $(SRCDIR)/stream_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/stream_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)
