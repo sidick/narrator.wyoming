@@ -29,7 +29,7 @@ void audio_set_outfile(const char *path)
     if (path && *path) g_path = path;
 }
 
-void audio_set_unit(int unit) { (void)unit; }   /* AHI-only; ignored on host */
+void audio_set_mode(unsigned long mode_id) { (void)mode_id; }   /* AHI-only; ignored on host */
 
 int audio_open(int rate, int width, int channels)
 {
