@@ -100,19 +100,51 @@ setup:
    poll `AHIDB_PlayingOffset` for read position. Most complex but
    truly gapless and the design AHI was built for.
 
+## Step 3 — `AHIST_DYNAMICSAMPLE` + looping (passed)
+
+`dynamic_probe.c` allocates a 32 KB ring, pre-fills it with a 440 Hz sine,
+loads it with `AHI_LoadSound(0, AHIST_DYNAMICSAMPLE, ...)`, sets up looping
+in `AHI_Play` (`AHIP_Sound = 0` + `AHIP_LoopSound = 0` + `AHIP_LoopVol =
+full`), then rewrites the ring's contents twice during playback (440 →
+880 → 440 at 1-second intervals).
+
+Goertzel analysis of the BlackHole capture against 440 / 880 / 1320 Hz:
+
+  window         440 Hz       880 Hz       1320 Hz    dominant
+  7.0-7.5s     10,266,435      122,696      108,693    440 Hz
+  7.5-8.0s      4,825,452      201,592       79,875    440 Hz
+  8.0-8.5s         36,390    2,037,948      108,897    880 Hz   <- swap took
+  8.5-9.0s      1,561,765    1,838,606      159,410    880 Hz
+  9.0-9.5s              0            0            0    (transition)
+  9.5-10.0s     2,112,135       79,522       33,043    440 Hz   <- swap back
+
+The buffer-content swaps clearly take effect within the running loop
+without breaking continuity (modulo a brief transition window around
+the swap point at 9.0-9.5s where one cycle was mid-replay).
+
+This is the streaming primitive. The full streaming design becomes:
+
+  - Allocate a ring of, say, ~370 ms (16 KB) or ~750 ms (32 KB).
+  - LoadSound it as DYNAMICSAMPLE with looping.
+  - Producer maintains a write head; chunks of incoming PCM are written
+    ahead of the play head.
+  - For pacing: either poll `AHI_GetAudioAttrs(AHIDB_PlayingOffset)` to
+    track the read head, or write at a rate paced by `Delay()` matched
+    to the audio sample rate (simpler, less precise).
+  - End-of-stream: write silence to drain, AHIC_Play FALSE when the play
+    head clears the last real sample.
+
 ## Recommended next move when we come back to this
 
-Either:
-- **Re-investigate hook timing**: add to `hook_probe.c` a second
-  `AHI_Play` queued while the first is still playing, plus calls to
-  `AHI_GetAudioAttrs(AHIDB_PlayingSound)` to confirm what AHI thinks is
-  on the channel at hook-fire time. Decide whether SoundFunc is
-  reliable enough for ping-pong.
-- Or **prototype the ring-buffer approach** as a new probe
-  (`dynamicsample_probe.c`?). If polling `AHIDB_PlayingOffset` works
-  cleanly, this becomes the streaming primitive of choice.
+`dynamic_probe.c` validated the primitive. Step 4 is to extend it into a
+streaming probe that writes incrementally rather than swapping the whole
+buffer at once — i.e. a producer thread that knows about a write head
+and stays ahead of the play head. That probe should also try polling
+`AHIDB_PlayingOffset` to see if AHI exposes the read position usefully.
+If polling works, the design above closes cleanly. If polling is flaky,
+fall back to `Delay()`-based pacing (the ring being a forgiveness window
+for any drift).
 
-Either way, audio_ahi.c and nw_engine.c stay on v1 buffered playback
-until one of those probes proves a path forward. v1 has a real latency
-regression but is correct and audible; the bar for swapping it out is
-"the alternative is also correct AND audible AND lower-latency".
+Until then, audio_ahi.c and nw_engine.c stay on v1 buffered playback.
+The streaming-primitive validation in step 3 means the design is no
+longer blocked on an open question — only implementation effort.

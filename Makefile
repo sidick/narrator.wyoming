@@ -177,6 +177,14 @@ $(BUILD)/amiga/hook_probe: $(SRCDIR)/hook_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/hook_probe.c
 
+# dynamic_probe: verifies AHIST_DYNAMICSAMPLE + ring buffer + looped Play —
+# the canonical AHI Developer Guide streaming primitive. Plays a looped sine
+# and changes the buffer contents mid-playback; if it works, audible pitch
+# transitions at the second boundaries (440 -> 880 -> 440 Hz).
+$(BUILD)/amiga/dynamic_probe: $(SRCDIR)/dynamic_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/dynamic_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)
