@@ -62,15 +62,25 @@ gain 80
 smooth 2
 
 # --- PCM capture (optional, for audio-quality investigation) ---
-# When set to an AmigaDOS path, the device also writes a WAV copy of the PCM
-# stream it hands AHI -- post-smooth, pre-byte-swap, i.e. the little-endian
-# 16-bit samples Wyoming sent us after the high-cut filter. Format matches
-# Wyoming's output (22050Hz / 16-bit / mono), so the file is directly
-# comparable to a wyomingtest --out reference dump. Spans one device session
-# (OpenDevice..CloseDevice) and is overwritten on each open. Empty (or omitted)
-# = capture off. Useful target: Narrator:capture.wav (lands in the repo root
-# on the host via the Amiberry mount). Off by default.
-# capture Narrator:capture.wav
+# Two independent WAV taps in the pipeline. Each writes a 22050Hz/16-bit/mono
+# WAV at the AmigaDOS path you give it; spans one device session (OpenDevice
+# .. CloseDevice) and overwrites on each open. Empty/omitted = that tap off.
+#
+#   `capture`     tees AFTER smooth_buf, BEFORE the LE->BE swap -- i.e. the
+#                 little-endian samples we're about to hand AHI, with the
+#                 high-cut filter applied. Includes the per-utterance silence
+#                 pre-roll.
+#   `capture_raw` tees the RAW Wyoming PCM as it arrives, BEFORE smooth and
+#                 with NO pre-roll silence. Useful as the ground truth for
+#                 the same Piper response (Piper is stochastic per inference,
+#                 so a fresh server-side reference is NOT reproducible -- you
+#                 must capture both sides from one Wyoming response).
+#
+# Enable both to A/B the smooth filter's effect on a single utterance with
+# tools/compare_audio.py. Targets like Narrator:capture.wav land in the repo
+# root on the host via the Amiberry mount. Both off by default.
+# capture     Narrator:capture.wav
+# capture_raw Narrator:capture_raw.wav
 
 # --- Latency: split long input into pipelined chunks (optional) ---
 # Piper synthesizes one SENTENCE at a time, so a single long sentence has to be
