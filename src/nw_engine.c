@@ -563,7 +563,13 @@ static void ahi_drain(struct NW *nw)
     swap16(nw->ahiBuf, nw->ahiLen);
     si.ahisi_Type    = nw->ahiType;
     si.ahisi_Address = nw->ahiBuf;
-    si.ahisi_Length  = nw->ahiLen;      /* bytes (matches the working probes) */
+    /* ahisi_Length is in SAMPLES (devices/ahi.h: "Number of samples in array"),
+     * not bytes. Passing bytes makes AHI think the sample is 2x as long and
+     * produces audible periodic clicks on speech content. For M16S 1 sample
+     * = 2 bytes; for S16S = 4 bytes. The earlier "empirically bytes" claim
+     * was hiding subtle clicks that sine masked. */
+    si.ahisi_Length  = (nw->ahiType == AHIST_M16S) ? (nw->ahiLen >> 1)
+                                                   : (nw->ahiLen >> 2);
     if (AHI_LoadSound(0, AHIST_SAMPLE, &si, nw->ahiCtrl) == 0
      && AHI_ControlAudio(nw->ahiCtrl, AHIC_Play, TRUE, TAG_END) == 0) {
         AHI_Play(nw->ahiCtrl,

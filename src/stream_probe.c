@@ -142,7 +142,7 @@ int main(void)
 
     si.ahisi_Type    = AHIST_M16S;
     si.ahisi_Address = buf;
-    si.ahisi_Length  = BUF_BYTES;
+    si.ahisi_Length  = BUF_BYTES >> 1;  /* samples (devices/ahi.h), M16S */
     rc = AHI_LoadSound(0, AHIST_DYNAMICSAMPLE, &si, ctrl);
     if (rc != 0) { printf("FAIL: AHI_LoadSound rc=%lu\n", (unsigned long)rc); return 20; }
 

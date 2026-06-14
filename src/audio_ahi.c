@@ -161,10 +161,16 @@ int audio_open(int rate, int width, int channels)
     }
     /* Register the silence-filled buffer with AHI. We register the WHOLE
      * buffer; bytes past the eventual end-of-audio are silence and AHI
-     * plays them as silence until audio_close stops the mixer. */
+     * plays them as silence until audio_close stops the mixer.
+     *
+     * ahisi_Length is in SAMPLES, not bytes — devices/ahi.h:
+     *   ULONG ahisi_Length;   / Number of samples in array /
+     * Passing bytes here makes AHI think the sample is 2x as long, which
+     * yields subtle but audible periodic clicks on speech content (sine
+     * is forgiving and masks the artefact). For M16S, 1 sample = 2 bytes. */
     si.ahisi_Type    = g_type;
     si.ahisi_Address = g_buf;
-    si.ahisi_Length  = g_buf_size;
+    si.ahisi_Length  = g_buf_size >> 1;
     if (AHI_LoadSound(0, AHIST_DYNAMICSAMPLE, &si, g_ctrl) != 0) {
         fprintf(stderr, "AHI_LoadSound DYNAMICSAMPLE failed\n");
         return -1;

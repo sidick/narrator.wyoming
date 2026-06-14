@@ -85,7 +85,7 @@ int main(void)
 
     si.ahisi_Type    = AHIST_M16S;
     si.ahisi_Address = buf;
-    si.ahisi_Length  = flen;
+    si.ahisi_Length  = flen >> 1;  /* samples (devices/ahi.h), M16S */
     if (AHI_LoadSound(0, AHIST_SAMPLE, &si, ctrl) != 0) {
         printf("FAIL: AHI_LoadSound\n"); return 20;
     }

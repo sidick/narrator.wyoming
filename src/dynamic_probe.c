@@ -119,7 +119,7 @@ int main(void)
 
     si.ahisi_Type    = AHIST_M16S;      /* sample format                       */
     si.ahisi_Address = buf;
-    si.ahisi_Length  = BUF_BYTES;       /* bytes (matches the working probes)  */
+    si.ahisi_Length  = BUF_BYTES >> 1;  /* samples (devices/ahi.h), M16S */
 
     /* AHI_LoadSound with type AHIST_DYNAMICSAMPLE — the loading-method type
      * (not the sample format), which signals "this sample's data may change
