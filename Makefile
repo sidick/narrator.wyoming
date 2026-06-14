@@ -170,6 +170,13 @@ $(BUILD)/amiga/ahi_modes_probe: $(SRCDIR)/ahi_modes_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/ahi_modes_probe.c
 
+# hook_probe: verifies the AHIA_SoundFunc hook plumbing (calling convention,
+# whether the hook actually fires under Amiberry's AHI, signal latency) —
+# the prerequisite for the streaming v2 design described in CLAUDE.md.
+$(BUILD)/amiga/hook_probe: $(SRCDIR)/hook_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/hook_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)
