@@ -162,6 +162,14 @@ $(BUILD)/amiga/paula_11025_probe: $(SRCDIR)/paula_11025_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/paula_11025_probe.c
 
+# ahi_modes_probe: sweep multiple AHI audio modes (paula HiFi, uaesnd, UAE)
+# back-to-back with silence between, so one BlackHole capture covers all
+# the high-fidelity mode candidates. Each test reopens AHI from scratch
+# so the post-playback DC tail doesn't bleed into the next mode.
+$(BUILD)/amiga/ahi_modes_probe: $(SRCDIR)/ahi_modes_probe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/ahi_modes_probe.c
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)

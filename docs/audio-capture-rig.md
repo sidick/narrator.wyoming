@@ -174,11 +174,27 @@ measured.
    has less to be aliased up. Sample-rate-dependent: smooth that nulls
    at 22050/2 doesn't shape the band we care about (5-11 kHz). Worth
    trying anyway.
-3. **Enumerate paula modes** — we only tested two paula modes
-   (0x0002000c and 0x00020018) and they were indistinguishable. The
-   PAULA AudioMode file is 2 KB (vs FILESAVE's 800 B) so it has many
-   more modes. Worth running the probe against each before giving up
-   on AHI.
+3. **Pick a hi-fi AHI mode explicitly** (instead of inheriting unit 0's
+   "Fast 8 bit mono"). Run `ahi_modes_probe` to A/B alternatives. Modes
+   measured so far (peak-normalised, 11-15 / 15-20 kHz aliasing RMS):
+
+       paula:Fast 8 bit mono            0x0002000c    96 / 71  (default / worst)
+       paula:DMA 8 bit stereo           0x00020018    92 / 67
+       paula:HiFi 14 bit mono calibr.   0x0002000f    89 / 64  (-7 / -10%)
+       uaesnd:HiFi Stereo               0x003b0002    83 / 61  (-14 / -15%)
+       UAE 16 bit HIFI Stereo++         0x001a0000    83 / 60  (-14 / -15%)
+
+   uaesnd / UAE are emulator-specific (won't exist on real hardware);
+   paula HiFi 14 bit mono calibrated is the best real-hardware-portable
+   choice and the right default for nw_engine.c on real targets.
+   On Amiberry, uaesnd or UAE is cleaner and what user-facing AHI
+   prefs typically steers toward (this is what other AHI consumers like
+   Play16 sound clean through, when the user picks the AHI mode in
+   Play16's requester). The right strategy is: switch nw_engine.c to
+   the AHI library interface, expose the audio mode ID as a prefs key
+   so the user can pick, default to 0x0002000f (paula HiFi 14 bit
+   mono calibrated). This is the one actionable refactor with measured
+   improvement.
 
 ### Confirmed not to help
 
