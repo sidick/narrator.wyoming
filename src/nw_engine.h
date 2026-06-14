@@ -47,6 +47,15 @@ struct nwprefs {
                               * to this AmigaDOS path as a WAV file. Spans one
                               * device-task lifetime; one CMD_WRITE may concat
                               * many synthesis chunks. Empty = capture off. */
+    char capture_raw[128];   /* if non-empty, ALSO write a SECOND WAV tap'd
+                              * earlier in the path: the raw little-endian PCM
+                              * Wyoming sent us, BEFORE smooth_buf and without
+                              * the per-utterance silence pre-roll. Same format
+                              * as `capture`; enable BOTH to A/B the smooth
+                              * filter's effect on a single Piper response
+                              * (which works around Piper's stochastic
+                              * prosody — fresh server runs are NOT
+                              * reproducible). Empty = off. */
 };
 
 /* Fill *p with defaults, then overlay ENV:narrator.wyoming if present. */

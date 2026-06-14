@@ -120,12 +120,16 @@ struct NW {
     int   smooth;               /* high-cut passes (0=off); see smooth_buf       */
     short smz[SMOOTH_MAX];      /* per-pass previous-sample state for the filter  */
 
-    /* PCM capture: optional WAV tee of what we feed AHI (post-smooth, pre-swap)
-     * to the path in prefs.capture. Opened lazily on first ahi_submit; sizes are
-     * patched at session_close. DOSBase is open whenever captureFh != 0. */
+    /* PCM capture: optional WAV taps. captureFh holds the post-smooth/pre-swap
+     * stream (prefs.capture, tap inside ahi_submit). captureRawFh holds the raw
+     * pre-smooth Wyoming PCM (prefs.capture_raw, tap inside ahi_write — but only
+     * for real PCM data, not the silence pre-roll). DOSBase is shared between
+     * both; opened on whichever tap fires first, closed in session_close. */
     struct DosLibrary *captureDOSBase;
     BPTR  captureFh;            /* 0 = not open / disabled                       */
     long  captureBytes;         /* data-chunk bytes written so far                */
+    BPTR  captureRawFh;
+    long  captureRawBytes;
 
     /* persistent-connection bookkeeping (the held endpoint) */
     char  chost[128];
@@ -255,6 +259,7 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
     pr->gain = 80;             /* % of full scale; <100 = headroom for hot peaks */
     pr->smooth = 2;            /* high-cut: tame Paula-chain sibilance (validated) */
     pr->capture[0] = '\0';     /* capture off unless user sets a path             */
+    pr->capture_raw[0] = '\0';
 
     /* local named DOSBase so the proto/dos.h inlines (Open/Read/Close) use it */
     DOSBase = (struct DosLibrary *)OpenLibrary((STRPTR)"dos.library", 0);
@@ -281,6 +286,7 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
                     pref_get(buf, "gain", gainstr, (long)sizeof(gainstr));
                     pref_get(buf, "smooth", smoothstr, (long)sizeof(smoothstr));
                     pref_get(buf, "capture", pr->capture, (long)sizeof(pr->capture));
+                    pref_get(buf, "capture_raw", pr->capture_raw, (long)sizeof(pr->capture_raw));
                     if (portstr[0]) {
                         long v = 0; const char *q = portstr;
                         while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
@@ -356,9 +362,17 @@ static void smooth_buf(struct NW *nw, unsigned char *b, long bytes)
     }
 }
 
-/* ---- optional WAV capture (tee of the PCM we hand AHI) ---- */
+/* ---- optional WAV capture (tee of the PCM in our pipeline) ----
+ *
+ * Two independent taps share one dos.library open: `capture` records the
+ * post-smooth/pre-byte-swap PCM we hand AHI (tap in ahi_submit), `capture_raw`
+ * records the raw pre-smooth Wyoming PCM (tap in ahi_write, real-data calls
+ * only). Format mirrors Wyoming's: rate/channels from the AHI session, 16-bit
+ * LE. Header skeleton is written lazily on first sample; chunk sizes are
+ * patched in session_close. Best-effort: dos.library/Open failure leaves the
+ * tap silently disabled.
+ */
 
-/* Little-endian writers for WAV header fields. */
 static void put_u16_le(unsigned char *p, unsigned short v)
 {
     p[0] = (unsigned char)(v & 0xff);
@@ -372,31 +386,31 @@ static void put_u32_le(unsigned char *p, unsigned long v)
     p[3] = (unsigned char)((v >> 24) & 0xff);
 }
 
-/* Lazy capture file open + 44-byte WAV skeleton (sizes patched at finalize).
- * Best-effort: if dos.library or Open() fails, capture stays off silently. */
-static void capture_open(struct NW *nw)
+/* Open dos.library if not already; idempotent. */
+static void capture_ensure_dos(struct NW *nw)
+{
+    struct ExecBase *SysBase = nw->SysBase;
+    if (nw->captureDOSBase) return;
+    nw->captureDOSBase = (struct DosLibrary *)
+        OpenLibrary((STRPTR)"dos.library", 0);
+}
+
+/* Lazy open + 44-byte WAV skeleton for the file rooted at *fh. No-op if path
+ * is empty, already open, or dos.library can't be opened. */
+static void capture_open(struct NW *nw, const char *path, BPTR *fh, long *bytes)
 {
     struct DosLibrary *DOSBase;
-    unsigned char hdr[44];
-    unsigned long sr   = nw->rate;
-    unsigned short ch  = (nw->ahiType == AHIST_S16S) ? 2 : 1;
-    unsigned long brate = sr * ch * 2UL;
+    unsigned char  hdr[44];
+    unsigned long  sr    = nw->rate;
+    unsigned short ch    = (nw->ahiType == AHIST_S16S) ? 2 : 1;
+    unsigned long  brate = sr * ch * 2UL;
 
-    if (!nw->prefs.capture[0]) return;          /* feature off */
-    {
-        struct ExecBase *SysBase = nw->SysBase;
-        nw->captureDOSBase = (struct DosLibrary *)
-            OpenLibrary((STRPTR)"dos.library", 0);
-    }
+    if (!path || !path[0] || *fh) return;
+    capture_ensure_dos(nw);
     if (!nw->captureDOSBase) return;
     DOSBase = nw->captureDOSBase;
-    nw->captureFh = Open((STRPTR)nw->prefs.capture, MODE_NEWFILE);
-    if (!nw->captureFh) {
-        struct ExecBase *SysBase = nw->SysBase;
-        CloseLibrary((struct Library *)nw->captureDOSBase);
-        nw->captureDOSBase = 0;
-        return;
-    }
+    *fh = Open((STRPTR)path, MODE_NEWFILE);
+    if (!*fh) return;
     /* RIFF header with placeholder sizes (patched in capture_finalize). */
     hdr[0]='R'; hdr[1]='I'; hdr[2]='F'; hdr[3]='F';
     put_u32_le(hdr + 4, 36);                    /* placeholder: 36 + data */
@@ -411,46 +425,44 @@ static void capture_open(struct NW *nw)
     put_u16_le(hdr + 34, 16);
     hdr[36]='d'; hdr[37]='a'; hdr[38]='t'; hdr[39]='a';
     put_u32_le(hdr + 40, 0);                    /* placeholder */
-    Write(nw->captureFh, hdr, 44);
-    nw->captureBytes = 0;
+    Write(*fh, hdr, 44);
+    *bytes = 0;
 }
 
-/* Append `bytes` of LE PCM to the capture file; no-op if disabled. */
-static void capture_write(struct NW *nw, const unsigned char *data, long bytes)
+/* Append `n` bytes of LE PCM. No-op if the tap is disabled / failed to open. */
+static void capture_write(struct NW *nw, BPTR fh, long *bytes,
+                          const unsigned char *data, long n)
 {
     struct DosLibrary *DOSBase;
-    if (!nw->captureFh || bytes <= 0) return;
+    if (!fh || n <= 0) return;
     DOSBase = nw->captureDOSBase;
-    Write(nw->captureFh, (APTR)data, bytes);
-    nw->captureBytes += bytes;
+    Write(fh, (APTR)data, n);
+    *bytes += n;
 }
 
-/* Patch the RIFF/data sizes and close. Safe to call when capture is off. */
-static void capture_finalize(struct NW *nw)
+/* Patch RIFF/data sizes and close. Safe with a never-opened tap (fh == 0). */
+static void capture_finalize(struct NW *nw, BPTR *fh, long bytes)
 {
     struct DosLibrary *DOSBase;
     unsigned char le[4];
-    if (!nw->captureFh) {
-        if (nw->captureDOSBase) {
-            struct ExecBase *SysBase = nw->SysBase;
-            CloseLibrary((struct Library *)nw->captureDOSBase);
-            nw->captureDOSBase = 0;
-        }
-        return;
-    }
+    if (!*fh) return;
     DOSBase = nw->captureDOSBase;
-    Seek(nw->captureFh, 4, OFFSET_BEGINNING);
-    put_u32_le(le, (unsigned long)(36 + nw->captureBytes));
-    Write(nw->captureFh, le, 4);
-    Seek(nw->captureFh, 40, OFFSET_BEGINNING);
-    put_u32_le(le, (unsigned long)nw->captureBytes);
-    Write(nw->captureFh, le, 4);
-    Close(nw->captureFh);
-    nw->captureFh = 0;
-    {
-        struct ExecBase *SysBase = nw->SysBase;
-        CloseLibrary((struct Library *)nw->captureDOSBase);
-    }
+    Seek(*fh, 4, OFFSET_BEGINNING);
+    put_u32_le(le, (unsigned long)(36 + bytes));
+    Write(*fh, le, 4);
+    Seek(*fh, 40, OFFSET_BEGINNING);
+    put_u32_le(le, (unsigned long)bytes);
+    Write(*fh, le, 4);
+    Close(*fh);
+    *fh = 0;
+}
+
+/* Release the shared dos.library, once both taps are finalized. */
+static void capture_close_dos(struct NW *nw)
+{
+    struct ExecBase *SysBase = nw->SysBase;
+    if (!nw->captureDOSBase) return;
+    CloseLibrary((struct Library *)nw->captureDOSBase);
     nw->captureDOSBase = 0;
 }
 
@@ -459,9 +471,8 @@ static void ahi_submit(struct NW *nw, int i, long bytes)
     struct ExecBase   *SysBase = nw->SysBase;
     struct AHIRequest *r = nw->ahiReq[i];
     smooth_buf(nw, nw->ahiBuf[i], bytes);  /* high-cut (LE) before the byte-swap */
-    if (nw->prefs.capture[0] && !nw->captureFh && !nw->captureDOSBase)
-        capture_open(nw);                  /* lazy: rate/channels known by now    */
-    capture_write(nw, nw->ahiBuf[i], bytes); /* tee LE PCM (no-op if disabled)    */
+    capture_open(nw, nw->prefs.capture, &nw->captureFh, &nw->captureBytes);
+    capture_write(nw, nw->captureFh, &nw->captureBytes, nw->ahiBuf[i], bytes);
     swap16(nw->ahiBuf[i], bytes);          /* little-endian PCM -> AHI big-endian */
     r->ahir_Std.io_Command = CMD_WRITE;
     r->ahir_Std.io_Data    = nw->ahiBuf[i];
@@ -527,7 +538,16 @@ static void ahi_write(struct NW *nw, const unsigned char *data, long len)
         long space = AHIBUFSZ - nw->fillpos;
         long take  = len < space ? len : space;
         unsigned char *dst = nw->ahiBuf[nw->fill] + nw->fillpos;
-        if (data) { CopyMem((APTR)data, dst, (ULONG)take); data += take; }
+        if (data) {
+            /* Tee raw Wyoming PCM here (silence pre-roll has data==NULL, so
+             * it's already excluded from this branch). Lazy file open: rate
+             * and channels are known by now from ahi_open. */
+            capture_open(nw, nw->prefs.capture_raw,
+                         &nw->captureRawFh, &nw->captureRawBytes);
+            capture_write(nw, nw->captureRawFh, &nw->captureRawBytes,
+                          data, take);
+            CopyMem((APTR)data, dst, (ULONG)take); data += take;
+        }
         else { /* silence; volatile so GCC can't fold it into a memset() we
                 * don't link (-nostdlib) */
             volatile unsigned char *z = dst; long k;
@@ -735,7 +755,9 @@ static void session_close(struct NW *s)
     if (!s) return;
     SysBase = s->SysBase;
     ahi_close(s);                        /* drain + free AHI (last ahi_submits) */
-    capture_finalize(s);                 /* patch WAV sizes + close, if open    */
+    capture_finalize(s, &s->captureFh,    s->captureBytes);
+    capture_finalize(s, &s->captureRawFh, s->captureRawBytes);
+    capture_close_dos(s);
     session_disconnect(s);
     if (s->CodesetsBase) CloseLibrary(s->CodesetsBase);
     if (s->SocketBase)   CloseLibrary(s->SocketBase);
