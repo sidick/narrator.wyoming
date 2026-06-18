@@ -37,7 +37,7 @@ jobs:
     name: Host build (cc, strict warnings)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: make host
         run: make host
       - name: smoke-run host binaries
@@ -51,7 +51,7 @@ jobs:
     name: Amiga cross-build + Aminet archive
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Derive the image ref from the Makefile so the cache key tracks the
       # pinned digest automatically -- when `make refresh-codesets`-style
@@ -125,7 +125,7 @@ jobs:
     name: Semgrep (auto rules)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
