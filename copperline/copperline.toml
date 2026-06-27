@@ -1,0 +1,35 @@
+# Copperline config for headless AHI audio capture (narrator.wyoming).
+#
+# Boots a THROWAWAY COPY of the Amiberry "narrator" hard-drive install
+# (KS3.1, AHI installed) whose S/User-Startup has been patched to run
+# `SYS:pcmplay` -> AHI. pcmplay + fixture.pcm + pcmplay.cfg live in the copy's
+# root. Single bootable volume: no second mount, so none of the cross-volume
+# naming/timing fragility of Copperline's synthesized-RDB host-dir volumes
+# (an IDE slave is not probed by KS3.1; a second SCSI volume did not get the
+# "Narrator" label the install's hook needs). The real install is never
+# touched — capture.sh rsyncs it into copperline/bootvol and stages the files.
+#
+# Run (headless: capture mixed Paula output, bound the run, exit):
+#   copperline --config copperline/copperline.toml \
+#     --audio-wav copperline/out.wav --screenshot-after 16 copperline/shot.png
+# The screenshot doubles as a Guru check; the WAV is the AHI render to diff
+# against the fixture. See capture.sh.
+
+rom = "/Users/simond/Documents/Amiberry/Kickstarts/amiga-os-310-a1200.rom"
+
+[machine]
+profile = "A1200"
+
+[cpu]
+model = "68020"
+fpu = false        # pcmplay is -msoft-float; no FPU needed (and avoids #45)
+
+[memory]
+chip = "2M"
+fast = "8M"
+z3 = "16M"
+
+[ide]
+# Single bootable volume: throwaway copy of the install + pcmplay (in-memory,
+# guest writes discarded at exit). Gayle IDE master is always probed by KS3.1.
+master = "/Users/simond/src/narrator.wyoming/copperline/bootvol"

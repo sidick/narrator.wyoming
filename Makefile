@@ -211,6 +211,14 @@ $(BUILD)/amiga/becap_play_probe: $(SRCDIR)/becap_play_probe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/becap_play_probe.c
 
+# pcmplay: network-free AHI playback of a raw-PCM fixture, for deterministic
+# audio capture under Copperline (`copperline --audio-wav out.wav`). Same
+# audio.h sink as saytest/the device (audio_ahi.c), so the captured WAV
+# reflects the real production playback path. See copperline/ for the harness.
+$(BUILD)/amiga/pcmplay: $(SRCDIR)/pcmplay.c $(AMIGA_AUDIO) $(HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/pcmplay.c $(AMIGA_AUDIO)
+
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
 	@mkdir -p $(dir $@)

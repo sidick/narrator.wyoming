@@ -74,3 +74,11 @@ dkms.conf
 # debug information files
 *.dwo
 /test-install/
+
+# Copperline audio-capture harness (generated artifacts)
+/copperline/bootvol/
+/copperline/fixture.pcm
+/copperline/out.wav
+/copperline/shot.png
+/copperline/System
+/copperline/.active.wav
