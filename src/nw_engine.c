@@ -48,11 +48,18 @@
 #include <proto/codesets.h>
 
 #define RBUFSZ   16384
-/* Two ping-ponging AHI buffers, chained with ahir_Link for gapless playback
- * (AHI plays linked CMD_WRITEs sequentially; without the link it plays them
- * concurrently). Both are primed before playback starts so the first transition
- * is gapless. ~0.19s/buffer at 8K — small for low start latency. */
-#define AHIBUFSZ 8192
+
+/* v2 streaming: one big AHIST_DYNAMICSAMPLE buffer per AHI open. ~11.6 s at
+ * 22050/16/mono — covers any single-utterance Say call. Beyond this we
+ * truncate. Allocated once per ahi_open, freed at ahi_close. */
+#define AHIBUFSZ          (512L * 1024L)
+
+/* Head start in bytes (= ~370 ms at 22050/16/mono). Wait until this much
+ * audio is buffered before kicking off AHI_Play, so the write head is far
+ * enough ahead of AHI's mix-buffer read-ahead that network jitter doesn't
+ * close the gap. If an utterance ends with less than this buffered (short
+ * "Hi" text), ahi_drain kicks Play off there with whatever we've got. */
+#define AHI_HEADSTART     (32L * 1024L)
 
 /* Graceful-failure timeouts (seconds): an unreachable server fails fast instead
  * of hanging on the OS TCP timeout, and a mid-stream stall doesn't block forever. */
@@ -113,10 +120,12 @@ struct NW {
     struct AHIRequest   *ahiReq;
     struct AHIAudioCtrl *ahiCtrl;
     unsigned char       *ahiBuf;
-    long  ahiCap;               /* allocated bytes of ahiBuf                    */
-    long  ahiLen;               /* written bytes (this utterance, LE)            */
+    long  ahiCap;               /* allocated bytes of ahiBuf (constant once open)*/
+    long  ahiLen;               /* write head — bytes of BE PCM written           */
     int   ahiOpened;            /* OpenDevice succeeded                          */
     int   ahiAlloced;           /* AHI_AllocAudio succeeded                      */
+    int   ahiLoaded;            /* AHI_LoadSound succeeded                       */
+    int   ahiPlayStarted;       /* AHI_Play called for current utterance         */
     int   prerolled;            /* this utterance already has silence pre-roll   */
     unsigned long rate;
     int   ahiType;              /* AHIST_M16S / AHIST_S16S                       */
@@ -345,11 +354,20 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
  * consumers use.
  */
 
-static void swap16(unsigned char *b, long n)
+/* Copy `len` bytes of LE 16-bit PCM into dst, byteswapping each sample to
+ * BE. One 68k MOVE.W per sample so each destination word is written exactly
+ * once — AHI never sees half-swapped data even when reading the DYNAMIC
+ * buffer while we're still writing. Both pointers must be 2-byte aligned;
+ * AllocMem gives 4-byte and Wyoming PCM chunks are 16-bit aligned. */
+static void copy_swap16(unsigned char *dst, const unsigned char *src, long len)
 {
-    long i;
-    for (i = 0; i + 1 < n; i += 2) {
-        unsigned char t = b[i]; b[i] = b[i + 1]; b[i + 1] = t;
+    short                 *d = (short *)dst;
+    const unsigned short  *s = (const unsigned short *)src;
+    long                   n = len >> 1;
+    long                   i;
+    for (i = 0; i < n; i++) {
+        unsigned short v = s[i];
+        d[i] = (short)((v >> 8) | (v << 8));
     }
 }
 
@@ -455,38 +473,27 @@ static void capture_close_dos(struct NW *nw)
     nw->captureDOSBase = 0;
 }
 
-/* Grow nw->ahiBuf so it can hold `need` bytes. Returns 0 on success. */
-static int ahi_buf_grow(struct NW *nw, long need)
-{
-    struct ExecBase *SysBase = nw->SysBase;
-    long new_cap;
-    unsigned char *new_buf;
-    if (need <= nw->ahiCap) return 0;
-    new_cap = nw->ahiCap ? nw->ahiCap : 32768;
-    while (new_cap < need) new_cap *= 2;
-    new_buf = (unsigned char *)AllocMem((ULONG)new_cap, MEMF_PUBLIC);
-    if (!new_buf) return -1;
-    if (nw->ahiBuf) {
-        if (nw->ahiLen > 0)
-            CopyMem(nw->ahiBuf, new_buf, (ULONG)nw->ahiLen);
-        FreeMem(nw->ahiBuf, (ULONG)nw->ahiCap);
-    }
-    nw->ahiBuf = new_buf;
-    nw->ahiCap = new_cap;
-    return 0;
-}
-
 static int ahi_open(struct NW *nw, long rate, long width, long channels)
 {
     struct ExecBase *SysBase = nw->SysBase;
     struct Library  *AHIBase;     /* local so proto/ahi.h inlines pick it up */
-    if (width != 2) return -1;
-    nw->rate      = (unsigned long)rate;
-    nw->ahiType   = (channels >= 2) ? AHIST_S16S : AHIST_M16S;
-    nw->ahiLen    = 0;
-    nw->prerolled = 0;
+    struct AHISampleInfo si;
 
-    if (ahi_buf_grow(nw, 32768) != 0) return -1;
+    if (width != 2) return -1;
+    nw->rate           = (unsigned long)rate;
+    nw->ahiType        = (channels >= 2) ? AHIST_S16S : AHIST_M16S;
+    nw->ahiLen         = 0;
+    nw->ahiPlayStarted = 0;
+    nw->ahiLoaded      = 0;
+    nw->prerolled      = 0;
+
+    /* Fixed-size MEMF_CLEAR buffer. CLEAR gives free silence everywhere; the
+     * silence pre-roll at the start of each utterance is just a write head
+     * advance, no zeroing needed. */
+    nw->ahiBuf = (unsigned char *)
+        AllocMem((ULONG)AHIBUFSZ, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!nw->ahiBuf) return -1;
+    nw->ahiCap = AHIBUFSZ;
 
     nw->ahiPort = CreateMsgPort();
     if (!nw->ahiPort) return -1;
@@ -502,7 +509,7 @@ static int ahi_open(struct NW *nw, long rate, long width, long channels)
     nw->AHIBase   = (struct Library *)nw->ahiReq->ahir_Std.io_Device;
     AHIBase       = nw->AHIBase;
 
-    /* dos.library held for the AHI session, used by ahi_drain's Delay(). */
+    /* dos.library held for the AHI session — Delay() in ahi_drain. */
     nw->ahiDOSBase = (struct DosLibrary *)
         OpenLibrary((STRPTR)"dos.library", 0);
     if (!nw->ahiDOSBase) return -1;
@@ -516,39 +523,73 @@ static int ahi_open(struct NW *nw, long rate, long width, long channels)
     if (!nw->ahiCtrl) return -1;
     nw->ahiAlloced  = 1;
     nw->ahiModeOpen = nw->ahiMode;
+
+    /* Register the silence-filled buffer with AHI as a DYNAMIC sample —
+     * mid-play writes by ahi_write update what AHI is reading.
+     * ahisi_Length is in SAMPLES (M16S: bytes/2; S16S: bytes/4). */
+    si.ahisi_Type    = nw->ahiType;
+    si.ahisi_Address = nw->ahiBuf;
+    si.ahisi_Length  = (nw->ahiType == AHIST_M16S) ? (nw->ahiCap >> 1)
+                                                   : (nw->ahiCap >> 2);
+    if (AHI_LoadSound(0, AHIST_DYNAMICSAMPLE, &si, nw->ahiCtrl) != 0)
+        return -1;
+    nw->ahiLoaded = 1;
+
     return 0;
 }
 
-/* Append PCM (or, when data == NULL, silence) to the utterance accumulator.
- * `capture` taps the LE bytes — but only when data is non-NULL (the silence
+/* Kick off the playback channel. Once started, AHI follows the write head
+ * through the buffer at audio rate. */
+static void ahi_start_play(struct NW *nw)
+{
+    struct Library *AHIBase = nw->AHIBase;
+    if (nw->ahiPlayStarted || !nw->ahiLoaded) return;
+    if (AHI_ControlAudio(nw->ahiCtrl, AHIC_Play, TRUE, TAG_END) != 0) return;
+    AHI_Play(nw->ahiCtrl,
+             AHIP_BeginChannel, 0UL,
+             AHIP_Freq,         nw->rate,
+             AHIP_Vol,          (ULONG)nw->volume,
+             AHIP_Pan,          0x8000UL,
+             AHIP_Sound,        0UL,
+             AHIP_EndChannel,   0UL,
+             TAG_END);
+    nw->ahiPlayStarted = 1;
+}
+
+/* Append PCM into the live AHI buffer. data == NULL writes silence (advance
+ * the write head; buffer is MEMF_CLEAR-zero so no actual store needed).
+ * Once the head start threshold is met, AHI_Play kicks off and the rest
+ * of the utterance streams.
+ * `capture` taps the LE bytes — but only when data is non-NULL (silence
  * pre-roll is excluded from the capture file by design). */
 static void ahi_write(struct NW *nw, const unsigned char *data, long len)
 {
-    struct ExecBase *SysBase = nw->SysBase;
     if (len <= 0) return;
-    if (ahi_buf_grow(nw, nw->ahiLen + len) != 0) return;
+    if (nw->ahiLen + len > nw->ahiCap) {
+        len = nw->ahiCap - nw->ahiLen;
+        if (len <= 0) return;
+    }
     if (data) {
-        CopyMem((APTR)data, nw->ahiBuf + nw->ahiLen, (ULONG)len);
+        copy_swap16(nw->ahiBuf + nw->ahiLen, data, len);
         capture_open(nw, nw->prefs.capture, &nw->captureFh, &nw->captureBytes);
         capture_write(nw, nw->captureFh, &nw->captureBytes, data, len);
-    } else {
-        /* silence; volatile so gcc can't fold this into a memset() we
-         * don't link against (-nostdlib). */
-        volatile unsigned char *z = nw->ahiBuf + nw->ahiLen;
-        long k;
-        for (k = 0; k < len; k++) z[k] = 0;
     }
+    /* else: silent regions in the MEMF_CLEAR-zeroed buffer; no write. */
     nw->ahiLen += len;
+
+    if (!nw->ahiPlayStarted && nw->ahiLen >= AHI_HEADSTART)
+        ahi_start_play(nw);
 }
 
-/* End of an utterance: byte-swap, AHI_LoadSound + AHI_Play the accumulator,
- * Delay() for the actual audio duration, then reset for the next utterance.
- * Keeps the AHIAudioCtrl alive across utterances. */
+/* End of an utterance: ensure playback was kicked off, Delay for the audio
+ * duration so we don't return before the speaker has finished, AHIC_Play
+ * FALSE, then zero the written region so the next utterance gets a clean
+ * buffer (its own writes overlay this, but its pre-roll silence and any
+ * tail past its end must be silence, not last utterance's leftovers). */
 static void ahi_drain(struct NW *nw)
 {
     struct Library    *AHIBase = nw->AHIBase;
     struct DosLibrary *DOSBase = nw->ahiDOSBase;
-    struct AHISampleInfo si;
     long  duration_ticks;
 
     if (!nw->ahiAlloced || nw->ahiLen <= 0) {
@@ -556,41 +597,40 @@ static void ahi_drain(struct NW *nw)
         return;
     }
 
-    /* Brief trailing silence so the channel-stop click lands on silence. */
+    /* Brief trailing silence so the channel-stop click lands on silence.
+     * (For DYNAMIC streaming this is mostly cosmetic — Play head naturally
+     * runs into MEMF_CLEAR zeros if we don't write — but cheap, and keeps
+     * the capture's wall time aligned to the audio duration.) */
     if (nw->prerolled)
-        ahi_write(nw, 0, ((long)nw->rate >> 4) * 2);   /* ~64ms */
+        ahi_write(nw, 0, ((long)nw->rate >> 4) * 2);   /* ~64 ms */
 
-    swap16(nw->ahiBuf, nw->ahiLen);
-    si.ahisi_Type    = nw->ahiType;
-    si.ahisi_Address = nw->ahiBuf;
-    /* ahisi_Length is in SAMPLES (devices/ahi.h: "Number of samples in array"),
-     * not bytes. Passing bytes makes AHI think the sample is 2x as long and
-     * produces audible periodic clicks on speech content. For M16S 1 sample
-     * = 2 bytes; for S16S = 4 bytes. The earlier "empirically bytes" claim
-     * was hiding subtle clicks that sine masked. */
-    si.ahisi_Length  = (nw->ahiType == AHIST_M16S) ? (nw->ahiLen >> 1)
-                                                   : (nw->ahiLen >> 2);
-    if (AHI_LoadSound(0, AHIST_SAMPLE, &si, nw->ahiCtrl) == 0
-     && AHI_ControlAudio(nw->ahiCtrl, AHIC_Play, TRUE, TAG_END) == 0) {
-        AHI_Play(nw->ahiCtrl,
-                 AHIP_BeginChannel, 0UL,
-                 AHIP_Freq,         nw->rate,
-                 AHIP_Vol,          (ULONG)nw->volume,
-                 AHIP_Pan,          0x8000UL,
-                 AHIP_Sound,        0UL,
-                 AHIP_EndChannel,   0UL,
-                 TAG_END);
+    /* Short utterance: hadn't crossed the head start threshold by audio_close.
+     * Force playback to start now with whatever we've got. */
+    if (!nw->ahiPlayStarted)
+        ahi_start_play(nw);
 
-        /* samples / rate seconds, +25 ticks (0.5s) of safety margin. */
+    if (nw->ahiPlayStarted) {
+        /* samples / rate seconds, +25 ticks (0.5 s) of safety margin. Over-
+         * estimates by however long ahi_write was active (because playback
+         * was concurrent with the writes), but a safe upper bound — Play
+         * has definitely finished by then. */
         duration_ticks = (long)(((nw->ahiLen / 2) * 50UL) / nw->rate) + 25;
         Delay((LONG)duration_ticks);
-
         AHI_ControlAudio(nw->ahiCtrl, AHIC_Play, FALSE, TAG_END);
-        AHI_UnloadSound(0, nw->ahiCtrl);
     }
 
-    nw->ahiLen    = 0;
-    nw->prerolled = 0;
+    /* Zero the region we wrote so next utterance starts on silence. The
+     * buffer was MEMF_CLEAR'd on AHI_AllocMem, so we only need to undo
+     * what we wrote — bounded by ahiLen, not the full ahiCap. */
+    {
+        volatile unsigned char *z = nw->ahiBuf;
+        long k;
+        for (k = 0; k < nw->ahiLen; k++) z[k] = 0;
+    }
+
+    nw->ahiLen         = 0;
+    nw->prerolled      = 0;
+    nw->ahiPlayStarted = 0;
 }
 
 static void ahi_close(struct NW *nw)
@@ -599,6 +639,7 @@ static void ahi_close(struct NW *nw)
     struct Library  *AHIBase = nw->AHIBase;
     if (nw->ahiLen > 0) ahi_drain(nw);
 
+    if (nw->ahiLoaded)   { AHI_UnloadSound(0, nw->ahiCtrl); nw->ahiLoaded = 0; }
     if (nw->ahiAlloced)  { AHI_FreeAudio(nw->ahiCtrl); nw->ahiCtrl = 0; nw->ahiAlloced = 0; }
     if (nw->ahiBuf)      { FreeMem(nw->ahiBuf, (ULONG)nw->ahiCap); nw->ahiBuf = 0; nw->ahiCap = 0; }
     if (nw->ahiOpened)   { CloseDevice((struct IORequest *)nw->ahiReq); nw->ahiOpened = 0; }
