@@ -7,15 +7,20 @@
 #      the archive (see CLAUDE.md "Versioning").
 #   2. `git push --follow-tags` pushes both the commit and the tag.
 #   3. The tag push triggers this workflow.
-#   4. The workflow rebuilds the archive from scratch in CI (so the artifact
-#      attached to the GitHub Release is reproducible from public CI, not
-#      just from one developer's machine), then creates a GitHub Release
-#      with the lha + Aminet readme attached and auto-generated notes from
-#      the commits since the previous tag.
+#   4. The `release` job rebuilds the archive from scratch in CI (so the
+#      artifact attached to the GitHub Release is reproducible from public
+#      CI, not just from one developer's machine), checks the tag against
+#      version.mk / the readme / the $VER strings, validates the readme,
+#      then creates a GitHub Release with the lha + Aminet readme attached
+#      and auto-generated notes from the commits since the previous tag.
+#   5. The `aminet` job pauses until the upload is approved in the Actions
+#      UI (the `aminet` environment has a required reviewer), then FTPs the
+#      package to Aminet. Publishing to Aminet is irreversible-ish (uploads
+#      land in /new for moderation) — keep the human in the loop.
 #
-# Aminet upload is still manual -- Aminet has no API and the maintainers
-# gatekeep submissions. The GitHub Release is a second canonical source so
-# users can fetch the artifact even before Aminet processes the submission.
+# The GitHub Release is a second canonical source so users can fetch the
+# artifact even before Aminet processes the submission — and it exists even
+# if the Aminet upload is never approved.
 
 name: Release
 
@@ -37,6 +42,18 @@ jobs:
           # Need history for auto-generated release notes between tags.
           fetch-depth: 0
 
+      # `make release` tags whatever version.mk holds, so these should never
+      # disagree — but a hand-made tag or a stray `make bump` before pushing
+      # would ship an archive whose $VER contradicts the tag. Fail early.
+      - name: Verify tag matches the source version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          src=$(make -s version)
+          readme=$(sed -n 's/^Version:[[:space:]]*\(.*\)$/\1/p' NarratorWyomingDevice.readme)
+          echo "tag=$tag version.mk=$src readme=$readme"
+          [ "$tag" = "$src" ]    || { echo "::error file=version.mk::Tag v$tag does not match version.mk $src"; exit 1; }
+          [ "$tag" = "$readme" ] || { echo "::error file=NarratorWyomingDevice.readme::Tag v$tag does not match Version: $readme"; exit 1; }
+
       - name: Build archive
         run: |
           make dist
@@ -48,6 +65,14 @@ jobs:
           # the directory without sudo.
           sudo chown -R "$USER" build/
 
+      - name: Check the $VER strings made it into the binaries
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          # -F: fixed-string match (the pattern contains $ and parens);
+          # -a: search the binary as text.
+          grep -aqF "\$VER: narrator.device $v ("    build/amiga/narrator.device    || { echo "::error::narrator.device lacks \"\$VER: narrator.device $v (...)\""; exit 1; }
+          grep -aqF "\$VER: translator.library $v (" build/amiga/translator.library || { echo "::error::translator.library lacks \"\$VER: translator.library $v (...)\""; exit 1; }
+
       - name: Sanity-check archive contents
         run: |
           docker run --rm -v "$(pwd)":/work -w /work \
@@ -57,26 +82,15 @@ jobs:
       # Validate the readme one more time (CI on main already did this on
       # every PR, but `make release` re-stamps Version: from version.mk
       # during tagging, so a regression in that stamping path could produce
-      # a different readme here than the per-PR check saw) and -- if it
-      # passes -- upload the unversioned NarratorWyomingDevice.lha + readme
-      # to Aminet via FTP.
-      #
-      # The action also tries to attach the same files to a matching GitHub
-      # Release. At this point in the workflow no release exists yet (the
-      # `gh release create` step runs later), so the action logs "No
-      # GitHub Release found ...; skipping asset attachment" and moves on.
-      # That keeps the GitHub Release populated only with the versioned
-      # copies our gh release create step stages, so we don't end up with
-      # versioned + unversioned duplicates on the release page.
-      #
-      # The uploader email is derived from the readme's Uploader: line --
-      # no input or secret needed.
-      - name: Publish to Aminet
+      # a different readme here than the per-PR check saw). No upload here —
+      # that happens in the approval-gated `aminet` job below.
+      - name: Validate the readme (no upload)
         uses: sidick/aminet-release-action@v1
         with:
           filename: build/NarratorWyomingDevice.lha
           readme: NarratorWyomingDevice.readme
           category: util/sys
+          validate-only: true
 
       # Two different naming conventions for the two distribution channels:
       #
@@ -111,3 +125,45 @@ jobs:
             --generate-notes \
             "build/NarratorWyomingDevice-${V}.lha" \
             "build/NarratorWyomingDevice-${V}.readme"
+
+      # The unversioned pair Aminet expects, handed to the gated job below so
+      # it doesn't have to rebuild (approval may come days later, when a
+      # rebuild would stamp a different $VER date than the release assets).
+      - name: Keep the package for the Aminet job
+        uses: actions/upload-artifact@v7
+        with:
+          name: aminet-dist
+          path: |
+            build/NarratorWyomingDevice.lha
+            NarratorWyomingDevice.readme
+          if-no-files-found: error
+
+  aminet:
+    name: Upload to Aminet (waits for approval)
+    runs-on: ubuntu-latest
+    needs: release
+    # The `aminet` environment has a required reviewer, so this job pauses
+    # until the upload is explicitly approved in the Actions UI. If the
+    # approval window lapses (pending deployments expire after 30 days) or
+    # the upload fails, retry via aminet-upload.yml without re-tagging.
+    environment: aminet
+    steps:
+      # Restores the upload-time layout: build/NarratorWyomingDevice.lha +
+      # NarratorWyomingDevice.readme at the workspace root, which is what the
+      # action's Docker container gets mounted.
+      - uses: actions/download-artifact@v8
+        with:
+          name: aminet-dist
+          path: .
+
+      # The uploader email is derived from the readme's Uploader: line --
+      # no input or secret needed. (No GITHUB_TOKEN is passed, so the
+      # action's attach-to-release step skips itself — the GitHub Release
+      # already carries the versioned copies; attaching these unversioned
+      # ones would just duplicate them.)
+      - name: Publish to Aminet
+        uses: sidick/aminet-release-action@v1
+        with:
+          filename: build/NarratorWyomingDevice.lha
+          readme: NarratorWyomingDevice.readme
+          category: util/sys

@@ -3,9 +3,11 @@
 
 # Manual Aminet upload. Triggered by hand from the Actions tab (or
 # `gh workflow run`) when you need to push an existing GitHub Release's
-# artefacts to Aminet -- typically because the automated upload in
-# release.yml failed (FTP hiccup, Aminet maintenance, anything else
-# transient) and you want to retry without re-tagging.
+# artefacts to Aminet -- typically because release.yml's approval-gated
+# `aminet` job never ran (the pending approval expired after 30 days, or
+# was rejected and you changed your mind) or its upload failed (FTP
+# hiccup, Aminet maintenance, anything else transient) and you want to
+# retry without re-tagging.
 #
 # The workflow downloads the versioned lha + readme from the named
 # GitHub Release, renames them to the unversioned form Aminet expects,
