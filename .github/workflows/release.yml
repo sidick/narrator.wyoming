@@ -76,7 +76,7 @@ jobs:
       - name: Sanity-check archive contents
         run: |
           docker run --rm -v "$(pwd)":/work -w /work \
-            stefanreinauer/amiga-gcc@sha256:68f3233fe3b270654b471e11e0b2e25fae0ac34350959b5be360c9af84ef388a \
+            ghcr.io/reinauer/container-amiga-gcc@sha256:75eee7a55bcffdde76e0a4f42ca025b89796053807e8f1b05bab9294b640f4e8 \
             lha l build/NarratorWyomingDevice.lha
 
       # Validate the readme one more time (CI on main already did this on

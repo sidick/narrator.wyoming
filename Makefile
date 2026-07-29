@@ -16,8 +16,9 @@
 #   make dist        - build the uploadable Aminet archive (in the container)
 #   make clean
 #
-# Amiga toolchain: Bebbo m68k-amigaos GCC in stefanreinauer/amiga-gcc:latest.
-# Use 'make docker' if you don't have it locally.
+# Amiga toolchain: Bebbo m68k-amigaos GCC in the
+# ghcr.io/reinauer/container-amiga-gcc image. Use 'make docker' if you don't
+# have it locally.
 
 SRCDIR := src
 BUILD  := build
@@ -85,15 +86,22 @@ DISTSTAGE := $(BUILD)/dist/$(DISTNAME)
 DISTLHA   := $(BUILD)/$(DISTNAME).lha
 
 # --- Docker ---
+# The GitHub Container Registry mirror of stefanreinauer/amiga-gcc (same
+# image source, published to ghcr by the reinauer/container-amiga-gcc repo) --
+# same registry amiauth builds with, and no Docker Hub rate limits in CI.
+#
 # Pin the cross-compiler image by digest, not by mutable `:latest`. This is
 # what makes a 44.0 build today and a 44.0 build a year from now produce
-# identical binaries, regardless of what stefanreinauer pushes upstream
+# identical binaries, regardless of what reinauer pushes upstream
 # afterwards. To roll forward intentionally:
-#   docker pull stefanreinauer/amiga-gcc:latest
+#   docker pull ghcr.io/reinauer/container-amiga-gcc:latest
 #   docker image inspect --format='{{index .RepoDigests 0}}' \
-#       stefanreinauer/amiga-gcc:latest
-# then paste the resulting `stefanreinauer/amiga-gcc@sha256:...` below.
-IMAGE      ?= stefanreinauer/amiga-gcc@sha256:68f3233fe3b270654b471e11e0b2e25fae0ac34350959b5be360c9af84ef388a
+#       ghcr.io/reinauer/container-amiga-gcc:latest
+# then paste the resulting `ghcr.io/reinauer/container-amiga-gcc@sha256:...`
+# below, and update the matching hardcoded ref in
+# .github/workflows/release.yml (its sanity-check step). CI's cache key
+# tracks this line automatically.
+IMAGE      ?= ghcr.io/reinauer/container-amiga-gcc@sha256:75eee7a55bcffdde76e0a4f42ca025b89796053807e8f1b05bab9294b640f4e8
 DOCKER_RUN := docker run --rm -v "$(CURDIR)":/work -w /work $(IMAGE)
 
 .PHONY: all host amiga docker dist dist-pack bump release version readme-version refresh-codesets clean
