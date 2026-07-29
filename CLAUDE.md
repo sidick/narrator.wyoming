@@ -64,7 +64,7 @@ Remaining hardening ideas: reconnect-on-drop mid-session, real `CMD_FLUSH`/`Abor
 
 ## Build / test / run
 
-The Amiga build uses the **Bebbo m68k-amigaos GCC** cross-toolchain (GCC 6.5.0b), shipped in the `stefanreinauer/amiga-gcc:latest` Docker image (compiler at `/opt/amiga/bin/m68k-amigaos-gcc`, already on PATH inside the container).
+The Amiga build uses the **Bebbo m68k-amigaos GCC** cross-toolchain (GCC 6.5.0b), shipped in the `ghcr.io/reinauer/container-amiga-gcc` Docker image (the GitHub Container Registry mirror of `stefanreinauer/amiga-gcc`, pinned by digest in the Makefile's `IMAGE`; compiler at `/opt/amiga/bin/m68k-amigaos-gcc`, already on PATH inside the container).
 
 - `make host` (default) — native binary `build/host/wyomingtest` via system `cc`. Use this to validate the protocol against a real server quickly.
 - `make amiga` — cross-compile `build/amiga/wyomingtest` (needs `m68k-amigaos-gcc` on PATH; this is what runs inside the container).

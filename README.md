@@ -194,7 +194,7 @@ It pairs well with narrator.wyoming as an up-to-date, native speech handler.
 ## Build
 
 The Amiga binaries cross-compile with **Bebbo's m68k-amigaos GCC**, shipped in the
-`stefanreinauer/amiga-gcc:latest` Docker image — no local toolchain needed:
+`ghcr.io/reinauer/container-amiga-gcc` Docker image — no local toolchain needed:
 
 ```
 make docker      # build build/amiga/{narrator.device, translator.library, ...}
