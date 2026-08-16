@@ -74,11 +74,17 @@ static int write_env(const char *contents)
 /* Submit one CMD_WRITE and report the outcome. Times are reported only as
  * "io_Error / io_Actual" -- the goal of failtest isn't to measure latency,
  * it's to confirm the device doesn't hang or Guru when the world is broken. */
-static void run_scenario(const char *label,
-                         struct narrator_rb *io,
-                         const char *text)
+/* PASS = the device failed gracefully: non-zero io_Error or zero io_Actual,
+ * within run_scenario's own DoIO (no hang) -- this test exists to prove a
+ * broken server config doesn't hang/Guru the device, not to check for a
+ * particular error code. */
+static int run_scenario(const char *label,
+                        const char *tag,
+                        struct narrator_rb *io,
+                        const char *text)
 {
     BYTE err;
+    int  ok;
 
     printf("--- %s ---\n", label);
     fflush(stdout);
@@ -87,8 +93,9 @@ static void run_scenario(const char *label,
                      (struct IORequest *)io, 0);
     if (err != 0) {
         printf("  OpenDevice -> %d (open itself failed)\n", (int)err);
+        printf("FAIL: %s\n", tag);
         fflush(stdout);
-        return;
+        return 0;
     }
 
     io->volume              = MAXVOL;
@@ -100,9 +107,13 @@ static void run_scenario(const char *label,
     printf("  io_Error=%d io_Actual=%lu  (expect non-zero io_Error or zero io_Actual)\n",
            (int)io->message.io_Error,
            (unsigned long)io->message.io_Actual);
+
+    ok = (io->message.io_Error != 0 || io->message.io_Actual == 0);
+    printf("%s: %s\n", ok ? "PASS" : "FAIL", tag);
     fflush(stdout);
 
     CloseDevice((struct IORequest *)io);
+    return ok;
 }
 
 int main(void)
@@ -111,6 +122,7 @@ int main(void)
     struct narrator_rb *io;
     char *orig;
     char  cfg[512];
+    int   all_ok = 1;
 
     printf("failtest: graceful-failure scenarios for narrator.device\n");
     fflush(stdout);
@@ -133,9 +145,10 @@ int main(void)
              "port 10200\n");
     if (write_env(cfg) != 0) {
         printf("scenario 1: write_env failed; skipping\n");
-    } else {
-        run_scenario("Scenario 1: unreachable IP (192.168.99.99)",
-                     io, "Hello.");
+        all_ok = 0;
+    } else if (!run_scenario("Scenario 1: unreachable IP (192.168.99.99)",
+                             "scenario1_unreachable_ip", io, "Hello.")) {
+        all_ok = 0;
     }
 
     /* --- Scenario 2: hostname that won't resolve --- */
@@ -144,9 +157,10 @@ int main(void)
              "port 10200\n");
     if (write_env(cfg) != 0) {
         printf("scenario 2: write_env failed; skipping\n");
-    } else {
-        run_scenario("Scenario 2: unresolvable hostname",
-                     io, "Hello.");
+        all_ok = 0;
+    } else if (!run_scenario("Scenario 2: unresolvable hostname",
+                             "scenario2_unresolvable_hostname", io, "Hello.")) {
+        all_ok = 0;
     }
 
     /* --- Restore the user's original prefs --- */
@@ -160,5 +174,6 @@ int main(void)
     DeleteIORequest((struct IORequest *)io);
     DeleteMsgPort(mp);
     printf("failtest done\n");
-    return 0;
+    printf("%s: failtest\n", all_ok ? "PASS" : "FAIL");
+    return all_ok ? 0 : 1;
 }
