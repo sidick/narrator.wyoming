@@ -975,12 +975,21 @@ static long session_send_recv(struct NW *s, const char *text, long textlen,
 
             if (find_int(hdr, "payload_length", &pay_len) && pay_len > 0) {
                 long got;
-                /* If AHI is held open on a different unit than the prefs now
-                 * ask for, close it so it reopens on the configured unit. */
-                if (s->ahiOpened && s->ahiUnitOpen != s->ahiUnit)
-                    ahi_close(s);
-                if (!s->ahiOpened && rate && width && channels)
-                    ahi_open(s, rate, width, channels);
+                /* If AHI is held open on a different unit, or a different
+                 * rate/channel count, than this utterance now needs (e.g. a
+                 * sex change mid-session mapping to a differently-rated
+                 * voice), close it so it reopens with the right format. */
+                if (s->ahiOpened) {
+                    int wantType = (channels >= 2) ? AHIST_S16S : AHIST_M16S;
+                    if (s->ahiUnitOpen != s->ahiUnit ||
+                        s->rate != (unsigned long)rate ||
+                        s->ahiType != wantType)
+                        ahi_close(s);
+                }
+                if (!s->ahiOpened && rate && width && channels) {
+                    if (ahi_open(s, rate, width, channels) != 0)
+                        ahi_close(s);   /* partial open; unwind to a clean closed state */
+                }
                 /* Per-utterance silence pre-roll: each utterance restarts the
                  * idle AHI channel, and the cold-start DAC transient would
                  * otherwise clip the word's onset (a one-word "test" loses its
