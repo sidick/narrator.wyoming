@@ -16,7 +16,12 @@ docs/PLAN.md
 /wyomingtest.log
 /saytest.log
 /devtest.log
+/failtest.log
 /version.log
+
+# Scratch prefs written by tests/run_nondist.sh (repo root, so it's
+# reachable from the guest's Narrator: mount) and cleaned up on exit.
+/.run_nondist.prefs.tmp
 
 # Host audio output
 /say.wav

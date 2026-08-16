@@ -46,22 +46,13 @@ def chunk_header(rate, width, channels, payload_len, inline):
     return header + data
 
 
-def serve_one(conn, pcm, rate, width, channels):
+def respond_once(conn, pcm, rate, width, channels):
     # Split into three chunks of uneven size so a chunk boundary lands
     # mid-buffer relative to wyoming.c's 16KiB rbuf -- exercises buf_fill()
     # refilling mid-payload, not just mid-header.
     n = len(pcm)
     a, b = n // 5, n // 5 + n // 2
     chunks = [pcm[:a], pcm[a:b], pcm[b:]]
-
-    # One line request in, ignored -- content doesn't affect the fixed
-    # canned response; this server tests framing, not text handling.
-    buf = b""
-    while b"\n" not in buf:
-        got = conn.recv(4096)
-        if not got:
-            break
-        buf += got
 
     conn.sendall(
         (
@@ -76,6 +67,27 @@ def serve_one(conn, pcm, rate, width, channels):
         conn.sendall(chunk_header(rate, width, channels, len(c), inline=(i % 2 == 0)))
         conn.sendall(c)
     conn.sendall(b'{"type": "audio-stop", "data": {}}\n')
+
+
+def serve_connection(conn, pcm, rate, width, channels):
+    # narrator.device holds ONE connection across multiple CMD_WRITEs (see
+    # CLAUDE.md "Persistent connection + own task"), same as a real Piper
+    # server -- so this must answer every request line sent on the
+    # connection, not just the first, or a second write on the same
+    # session sees a closed socket and fails with NWERR_PROTO (found by
+    # running devtest against an earlier one-request-per-connection
+    # version of this server: writes after the first came back
+    # io_Error=-105). buf retains bytes read past the current line's `\n`
+    # for the next iteration, same reason wyoming.c itself buffers reads.
+    buf = b""
+    while True:
+        while b"\n" not in buf:
+            got = conn.recv(4096)
+            if not got:
+                return  # client closed the connection
+            buf += got
+        _line, _, buf = buf.partition(b"\n")
+        respond_once(conn, pcm, rate, width, channels)
 
 
 def main():
@@ -98,7 +110,7 @@ def main():
         while count == 0 or served < count:
             conn, _ = srv.accept()
             try:
-                serve_one(conn, pcm, rate, width, channels)
+                serve_connection(conn, pcm, rate, width, channels)
             finally:
                 conn.close()
             served += 1
