@@ -9,7 +9,10 @@
 ; their parameters from a config file rather than the command line). The
 ; standalone test programs write a log read back from the host side.
 ;
-; Networking is Amiberry's bsdsocket.library emulation (bsdsocket_emu=true).
+; Networking is bsdsocket.library mapped straight to a host OS socket, no
+; guest TCP/IP stack involved: Copperline's [hostsocket] board in
+; net = "host" mode (see config/copperline-narrator.toml.example), or
+; Amiberry's equivalent bsdsocket_emu=true. Both boot this same script.
 
 CD Narrator:
 ; The AmigaDOS default 4KB CLI stack is too small (these programs use several KB

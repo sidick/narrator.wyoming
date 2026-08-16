@@ -25,7 +25,7 @@ docs/PLAN.md
 # Local Copperline test rig: staged boot volume + run artifacts (screenshots,
 # captured audio). Machine-specific, analogous to Amiberry's HardDrives/
 # directory which also isn't committed -- only the scripts/config that drive
-# it (boot-net, config/copperline-narrator.toml.example) are.
+# it (boot, config/copperline-narrator.toml.example) are.
 /copperline/
 
 # Prerequisites
