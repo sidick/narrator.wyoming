@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Simon Dick
 
-# CI -- run on every push to main and every PR targeting main. Three
+# CI -- run on every push to main and every PR targeting main. Four
 # independent jobs so a failure in one doesn't mask the others:
 #
 #   host-build : `make host` with the strict -Wall -Wextra -Werror flags,
@@ -17,6 +17,22 @@
 #                the Aminet archive. Uploads the resulting lha as a
 #                workflow artifact so reviewers can grab and inspect a
 #                build for any commit without rebuilding locally.
+#
+#   copperline-smoke : the first actual on-target CI coverage this repo has
+#                had. Runs in ghcr.io/sidick/amiga-dev:1 (the same Bebbo
+#                toolchain as amiga-dist, plus Copperline + its lavapipe
+#                Vulkan dependency preinstalled), so this job both
+#                cross-compiles wyomingtest and runs it under Copperline
+#                (bundled AROS ROM, no licensed Kickstart needed) in one
+#                container. Reaches the same mock Wyoming server host-build
+#                uses over Copperline's [hostsocket] board (net = "host"),
+#                and byte-compares the PCM it writes against
+#                tests/golden/wyomingtest.pcm -- the same fixture host-build
+#                already checked, now also proving the real cross-compiled
+#                Amiga binary + bsdsocket.library path works end to end.
+#                Deliberately does not cover AHI/narrator.device/Say (no
+#                licensed Workbench install available in CI); see
+#                tests/run_smoke.sh and tests/copperline/machine.toml.
 #
 #   semgrep    : security/quality scan with semgrep's auto rule pack.
 #                Same configuration we run locally with `semgrep --config
@@ -126,6 +142,25 @@ jobs:
             build/NarratorWyomingDevice.lha
             NarratorWyomingDevice.readme
           retention-days: 14
+
+  copperline-smoke:
+    name: On-target smoke test (Copperline)
+    runs-on: ubuntu-latest
+    # Shared toolchain + test-harness image (sidick/amiga-dev): the same
+    # Bebbo m68k-amigaos-gcc 6.5.0b (amiga6 branch) this project already
+    # targets, plus Copperline and its lavapipe Vulkan dependency
+    # preinstalled -- so this job can cross-compile wyomingtest and run
+    # Copperline in the same container, no separate install steps and no
+    # artifact hand-off from amiga-dist needed.
+    container: ghcr.io/sidick/amiga-dev:1
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cross-compile wyomingtest
+        run: make build/amiga/wyomingtest
+
+      - name: On-target smoke test
+        run: tests/run_smoke.sh
 
   semgrep:
     name: Semgrep (auto rules)

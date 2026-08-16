@@ -1,0 +1,10 @@
+; narrator.wyoming -- CI on-target smoke test (Copperline / bundled AROS ROM)
+;
+; Minimal boot: no Say, no AHI, just wyomingtest against the mock Wyoming
+; server on the CI runner (see ../../machine.toml and ../../run_smoke.sh).
+; wyomingtest reads config/narrator.wyoming (relative to SYS:, the boot
+; volume root and CLI startup cwd) for host/port/text/out -- Amiga argv is
+; unusable from the startup-sequence, same as under Amiberry/the real rig.
+
+Stack 65536
+wyomingtest >SYS:wyomingtest.log

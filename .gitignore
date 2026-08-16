@@ -30,6 +30,16 @@ docs/PLAN.md
 # it (boot, config/copperline-narrator.toml.example) are.
 /copperline/
 
+# tests/copperline/sys/: the staged binary (from build/amiga/) and the
+# on-target run's output/log written back through the writable [[filesys]]
+# mount, plus Copperline's .uaem sidecars for both. See tests/run_smoke.sh.
+/tests/copperline/sys/C/wyomingtest
+/tests/copperline/sys/C/wyomingtest.uaem
+/tests/copperline/sys/wyomingtest.pcm
+/tests/copperline/sys/wyomingtest.pcm.uaem
+/tests/copperline/sys/wyomingtest.log
+/tests/copperline/sys/wyomingtest.log.uaem
+
 # Prerequisites
 *.d
 

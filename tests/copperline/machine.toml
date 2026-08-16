@@ -1,0 +1,44 @@
+# Copperline config for the CI on-target smoke test (see ../run_smoke.sh).
+#
+# Deliberately different from the developer rig's config/copperline-narrator
+# .toml.example: no real Kickstart, no HardDrives/narrator volume, no AHI --
+# `rom` is omitted so Copperline boots its bundled AROS ROM (freely
+# redistributable, no licensed Kickstart image needed in CI), and the boot
+# volume is just this directory's sys/ tree: C/wyomingtest (staged by CI from
+# the freshly cross-compiled build/amiga/wyomingtest -- gitignored, not
+# committed) plus S/Startup-Sequence and config/narrator.wyoming. wyomingtest
+# only needs dos.library + bsdsocket.library -- no AHI/Workbench/Say --  so
+# this stays a minimal single-purpose disk rather than a full installed
+# Workbench.
+#
+# A1200 for its AGA Alice/Lisa chipset (2M chip RAM reach; the default
+# profile's ECS Agnus rev4 tops out at 1M) and because it's this project's
+# actual target machine class per CLAUDE.md. CPU must support the 68020
+# instructions build/amiga binaries are compiled for (Makefile's `-m68020`).
+[machine]
+profile = "A1200"
+
+[cpu]
+model = "68020"
+
+[memory]
+chip = "2M"
+fast = "4M"
+
+[[filesys]]
+# Relative to the invoking process's cwd, not this file's location --
+# run_smoke.sh always invokes copperline from the repo root.
+path = "tests/copperline/sys"
+volume = "SYS"
+bootpri = 5
+
+# Same bsdsocket.library-over-a-host-socket board used by the developer rig
+# (config/copperline-narrator.toml.example) -- see boot's networking comment.
+# "host" mode reaches 127.0.0.1 on the CI runner directly, which is where
+# ../mock_wyoming_server.py listens.
+[hostsocket]
+net = "host"
+
+[emulation]
+power_on = true
+warp_speed = "max"
