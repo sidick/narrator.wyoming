@@ -1,0 +1,48 @@
+# Copperline config for the narrator.wyoming on-target test rig.
+#
+# Copy to config/copperline-narrator.toml (gitignored -- paths below are
+# machine-specific) and fill in the real host paths. Run with:
+#   copperline --config config/copperline-narrator.toml
+#
+# This targets the SAME HardDrives/narrator directory Amiberry's narrator.uae
+# boots from (see .gitignore / CLAUDE.md), plus the same NR0:/Narrator: mount
+# of this repo. The .uaem sidecar files in that directory are the shared
+# UAE-family format, so both emulators read the same protection bits/comments
+# with no conversion.
+#
+# Unlike Amiberry's bsdsocket_emu=true (bsdsocket.library mapped straight to
+# host sockets, no real stack or device involved), this config fits a real
+# A2065 Ethernet board -- CMD_WRITE/etc. only work once a real TCP/IP stack
+# (Roadshow or AmiTCP) is installed on the boot volume and bound to it. See
+# boot-net at the repo root.
+
+rom = "/path/to/Kickstarts/amiga-os-310-a1200.rom"   # same ROM Amiberry uses
+
+[machine]
+profile = "A1200"        # AGA + Gayle, matches narrator.uae's chipset_compatible=A1200
+
+[cpu]
+model = "68030"           # CLAUDE.md's target spec is "~68030/40MHz+"
+clock_mhz = 40.0
+
+[memory]
+z3 = "16M"                # matches narrator.uae's z3mem_size=16
+
+[[filesys]]
+path = "/path/to/HardDrives/narrator"   # same directory as Amiberry's uaehf0
+volume = "Workbench"
+bootpri = 6                             # boots ahead of DF0: (pri 5)
+
+[[filesys]]
+path = "/path/to/narrator.wyoming"      # this repo, same as Amiberry's NR0:/uaehf1
+volume = "Narrator"
+# bootpri omitted -> -128: mounted, never offered for boot (matches NR0: today)
+
+[a2065]
+net = "nat"   # outbound-only IPv4 via virtual gateway; guest reaches the LAN
+              # Piper server the same way bsdsocket_emu does today.
+              # Guest TCP/IP stack: DHCP, or static 10.0.2.15/24 gw 10.0.2.2
+              # dns 10.0.2.3 -- see docs/guide/configuration.md `[a2065]`.
+              # "bridge" (--a2065-interface) is the more authentic
+              # alternative -- real LAN IP, inbound-capable -- but wired
+              # Ethernet only (Wi-Fi APs generally reject a second MAC).

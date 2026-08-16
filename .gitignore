@@ -18,6 +18,16 @@ docs/PLAN.md
 # config/narrator.wyoming.example is the template.
 /config/narrator.wyoming
 
+# Local, machine-specific Copperline config (absolute host paths); the
+# committed config/copperline-narrator.toml.example is the template.
+/config/copperline-narrator.toml
+
+# Local Copperline test rig: staged boot volume + run artifacts (screenshots,
+# captured audio). Machine-specific, analogous to Amiberry's HardDrives/
+# directory which also isn't committed -- only the scripts/config that drive
+# it (boot-net, config/copperline-narrator.toml.example) are.
+/copperline/
+
 # Prerequisites
 *.d
 

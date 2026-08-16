@@ -109,7 +109,7 @@ DOCKER_RUN := docker run --rm -v "$(CURDIR)":/work -w /work $(IMAGE)
 all: host
 
 host:  $(BUILD)/host/wyomingtest  $(BUILD)/host/saytest
-amiga: $(BUILD)/amiga/wyomingtest $(BUILD)/amiga/saytest $(DEV_BIN) $(LIB_BIN) $(BUILD)/amiga/devtest $(BUILD)/amiga/failtest
+amiga: $(BUILD)/amiga/wyomingtest $(BUILD)/amiga/saytest $(DEV_BIN) $(LIB_BIN) $(BUILD)/amiga/devtest $(BUILD)/amiga/failtest $(BUILD)/amiga/iscopperline
 
 device: $(DEV_BIN)
 translator: $(LIB_BIN)
@@ -133,6 +133,13 @@ $(BUILD)/amiga/devtest: $(SRCDIR)/devtest.c
 $(BUILD)/amiga/failtest: $(SRCDIR)/failtest.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/failtest.c
+
+# iscopperline: RC 0 under Copperline (FindConfigDev finds its identification
+# board), RC 5 (RETURN_WARN) otherwise (Amiberry, real hardware, no board).
+# S:User-Startup uses this to pick boot vs. boot-net on the shared disk.
+$(BUILD)/amiga/iscopperline: $(SRCDIR)/iscopperline.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(SRCDIR)/iscopperline.c
 
 # ---- host binaries ----
 $(BUILD)/host/wyomingtest: $(PROTO) $(SRCDIR)/main.c $(HOST_NET) $(HDRS)
