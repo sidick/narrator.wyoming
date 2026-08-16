@@ -1,6 +1,14 @@
 # Local planning notes (not committed)
 docs/PLAN.md
 
+# Local, non-redistributable files (Kickstart ROMs, a real AHI driver, a
+# licensed Workbench install, etc.) -- see nondist/README.md. Everything
+# inside is ignored except the README/.gitkeep that keep the directory
+# itself present in a fresh checkout.
+/nondist/*
+!/nondist/README.md
+!/nondist/.gitkeep
+
 # Build output
 /build/
 
