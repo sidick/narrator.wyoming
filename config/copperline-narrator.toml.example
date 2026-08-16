@@ -10,11 +10,12 @@
 # UAE-family format, so both emulators read the same protection bits/comments
 # with no conversion.
 #
-# Unlike Amiberry's bsdsocket_emu=true (bsdsocket.library mapped straight to
-# host sockets, no real stack or device involved), this config fits a real
-# A2065 Ethernet board -- CMD_WRITE/etc. only work once a real TCP/IP stack
-# (Roadshow or AmiTCP) is installed on the boot volume and bound to it. See
-# boot-net at the repo root.
+# Networking uses Copperline's [hostsocket] board in "host" mode -- the same
+# idea as Amiberry's bsdsocket_emu=true: bsdsocket.library autoboots from the
+# board's ROM (no Roadshow/AmiTCP install, no guest-side stack configuration)
+# and every socket call delegates straight to a real host OS socket. No
+# guest IP, no interface to bring up -- CMD_WRITE works as soon as the guest
+# boots, same as today under Amiberry.
 
 rom = "/path/to/Kickstarts/amiga-os-310-a1200.rom"   # same ROM Amiberry uses
 
@@ -38,11 +39,10 @@ path = "/path/to/narrator.wyoming"      # this repo, same as Amiberry's NR0:/uae
 volume = "Narrator"
 # bootpri omitted -> -128: mounted, never offered for boot (matches NR0: today)
 
-[a2065]
-net = "nat"   # outbound-only IPv4 via virtual gateway; guest reaches the LAN
-              # Piper server the same way bsdsocket_emu does today.
-              # Guest TCP/IP stack: DHCP, or static 10.0.2.15/24 gw 10.0.2.2
-              # dns 10.0.2.3 -- see docs/guide/configuration.md `[a2065]`.
-              # "bridge" (--a2065-interface) is the more authentic
-              # alternative -- real LAN IP, inbound-capable -- but wired
-              # Ethernet only (Wi-Fi APs generally reject a second MAC).
+[hostsocket]
+net = "host"  # delegate socket()/connect()/send()/recv() straight to a real
+              # host OS socket -- no NAT, no interface address, no guest
+              # stack. Matches Amiberry's bsdsocket_emu=true: the guest
+              # shares the host's network identity and reaches the Piper
+              # server on the LAN with zero configuration. See
+              # docs/guide/configuration.md `[hostsocket]`.

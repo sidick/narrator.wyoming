@@ -1,32 +1,19 @@
-; narrator.wyoming -- on-target test runner (Copperline / real A2065 + Roadshow)
+; narrator.wyoming -- on-target test runner (Copperline / hostsocket "host" mode)
 ;
 ; AmigaDOS script, auto-run from the system drive's S:User-Startup, which
 ; picks this over plain `boot` by probing for Copperline's identification
 ; board (build/amiga/iscopperline -- FindConfigDev(5192, 2), see that
-; source file) rather than checking whether a driver file exists: Roadshow's
-; DEVS:networks/a2065.device lives on this same shared disk either way, so
-; only a real board probe can tell Copperline and Amiberry apart.
+; source file).
 ;
-; Unlike `boot`, networking here goes through a real Zorro A2065 (Am7990
-; LANCE) board and a real TCP/IP stack (Roadshow), not a host-sockets
-; shortcut -- so CMD_WRITE only works once Roadshow has actually brought the
-; interface up. See config/copperline-narrator.toml's [a2065] section for the
-; emulator side (net = "nat"/"bridge").
+; Networking is Copperline's [hostsocket] board in `net = "host"` mode --
+; bsdsocket.library autoboots from the board's ROM, no Roadshow/AmiTCP
+; install and no guest-side stack config needed (same shape as Amiberry's
+; bsdsocket_emu=true; see config/copperline-narrator.toml's [hostsocket]
+; section for the emulator side). CMD_WRITE works as soon as the guest
+; boots, so this script is otherwise identical to `boot`.
 
 CD Narrator:
 Stack 131072
-
-; --- TODO: start Roadshow and wait for the interface to come up ---
-; Exact command/config depends on how Roadshow was installed on the shared
-; HardDrives/narrator volume (not done yet as of this script -- fill in once
-; installed and confirmed on-target). Likely shape:
-;
-;   Run >NIL: TCP:C/StartNet
-;   WaitForPort ... ; or a fixed Wait/link-check loop
-;
-; Do NOT copy the rest of `boot` below until this actually brings up the
-; interface -- otherwise CMD_WRITE will just fail with a connect error
-; identical to the failtest.log unreachable-host scenario.
 
 ; Install runtime prefs (server address + voice mapping) where the device
 ; reads them, same as `boot`.
@@ -35,7 +22,7 @@ Copy >NIL: Narrator:build/amiga/narrator.device   DEVS:narrator.device
 Copy >NIL: Narrator:build/amiga/translator.library LIBS:translator.library
 
 ; --- Say acceptance test (the drop-in goal: stock Say -> our device) ---
-Echo "narrator.wyoming Say test starting (Copperline / Roadshow / A2065)"
+Echo "narrator.wyoming Say test starting (Copperline / hostsocket)"
 SYS:Utilities/Say "Hello world. This is the Amiga, speaking with a neural voice over Wyoming and A.H.I."
 IF WARN
   Echo "*** Say returned WARN/ERROR ***"
