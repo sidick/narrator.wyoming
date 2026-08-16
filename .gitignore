@@ -13,6 +13,8 @@ docs/PLAN.md
 # Host audio output
 /say.wav
 *.wav
+# ...except the checked-in golden-file fixtures under tests/golden/.
+!/tests/golden/*.wav
 
 # Local, machine-specific config (server address etc.); the committed
 # config/narrator.wyoming.example is the template.

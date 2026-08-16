@@ -103,14 +103,17 @@ int main(int argc, char **argv)
         read_config("Narrator:config/narrator.wyoming");
 
 #ifndef PLATFORM_AMIGA
+    /* Positional host/port must win over a config-file host even though
+     * g_host is already non-empty by this point -- gate on whether argv
+     * itself has supplied the host yet, not on g_host being set. */
     {
-        int i;
+        int i, argv_host_set = 0;
         for (i = 1; i < argc; i++) {
             if (!strcmp(argv[i], "--text") && i + 1 < argc) set_str(g_text, sizeof g_text, argv[++i]);
             else if (!strcmp(argv[i], "--voice") && i + 1 < argc) set_str(g_voice, sizeof g_voice, argv[++i]);
             else if (!strcmp(argv[i], "--out") && i + 1 < argc) set_str(g_out, sizeof g_out, argv[++i]);
             else if (argv[i][0] == '-') { fprintf(stderr, "unknown option: %s\n", argv[i]); return 2; }
-            else if (!g_host[0]) set_str(g_host, sizeof g_host, argv[i]);
+            else if (!argv_host_set) { set_str(g_host, sizeof g_host, argv[i]); argv_host_set = 1; }
             else g_port = atoi(argv[i]);
         }
     }

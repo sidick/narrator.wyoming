@@ -4,9 +4,13 @@
 # CI -- run on every push to main and every PR targeting main. Three
 # independent jobs so a failure in one doesn't mask the others:
 #
-#   host-build : `make host` with the strict -Wall -Wextra -Werror flags.
-#                Tests that the host-side wyomingtest + saytest still build
-#                with system cc.
+#   host-build : `make host` with the strict -Wall -Wextra -Werror flags,
+#                then tests/run_golden.sh -- golden-file regression tests
+#                for wyomingtest/saytest against tests/mock_wyoming_server.py
+#                (a canned, deterministic stand-in for Piper), byte-comparing
+#                output against tests/golden/*. Catches regressions in the
+#                Wyoming framing (wyoming.c) and WAV writing (audio_host.c)
+#                without needing a real Piper server or an Amiga emulator.
 #
 #   amiga-dist : `make dist` -- runs the Bebbo m68k-amigaos-gcc cross
 #                compiler inside the digest-pinned Docker image and packs
@@ -46,6 +50,8 @@ jobs:
         run: |
           ./build/host/wyomingtest 2>&1 | head -5 || true
           ./build/host/saytest     2>&1 | head -5 || true
+      - name: golden-file regression tests
+        run: tests/run_golden.sh
 
   amiga-dist:
     name: Amiga cross-build + Aminet archive
