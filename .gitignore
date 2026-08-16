@@ -1,6 +1,14 @@
 # Local planning notes (not committed)
 docs/PLAN.md
 
+# Local, non-redistributable files (Kickstart ROMs, a real AHI driver, a
+# licensed Workbench install, etc.) -- see nondist/README.md. Everything
+# inside is ignored except the README/.gitkeep that keep the directory
+# itself present in a fresh checkout.
+/nondist/*
+!/nondist/README.md
+!/nondist/.gitkeep
+
 # Build output
 /build/
 
@@ -8,15 +16,42 @@ docs/PLAN.md
 /wyomingtest.log
 /saytest.log
 /devtest.log
+/failtest.log
 /version.log
+
+# Scratch prefs written by tests/run_nondist.sh (repo root, so it's
+# reachable from the guest's Narrator: mount) and cleaned up on exit.
+/.run_nondist.prefs.tmp
 
 # Host audio output
 /say.wav
 *.wav
+# ...except the checked-in golden-file fixtures under tests/golden/.
+!/tests/golden/*.wav
 
 # Local, machine-specific config (server address etc.); the committed
 # config/narrator.wyoming.example is the template.
 /config/narrator.wyoming
+
+# Local, machine-specific Copperline config (absolute host paths); the
+# committed config/copperline-narrator.toml.example is the template.
+/config/copperline-narrator.toml
+
+# Local Copperline test rig: staged boot volume + run artifacts (screenshots,
+# captured audio). Machine-specific, analogous to Amiberry's HardDrives/
+# directory which also isn't committed -- only the scripts/config that drive
+# it (boot, config/copperline-narrator.toml.example) are.
+/copperline/
+
+# tests/copperline/sys/: the staged binary (from build/amiga/) and the
+# on-target run's output/log written back through the writable [[filesys]]
+# mount, plus Copperline's .uaem sidecars for both. See tests/run_smoke.sh.
+/tests/copperline/sys/C/wyomingtest
+/tests/copperline/sys/C/wyomingtest.uaem
+/tests/copperline/sys/wyomingtest.pcm
+/tests/copperline/sys/wyomingtest.pcm.uaem
+/tests/copperline/sys/wyomingtest.log
+/tests/copperline/sys/wyomingtest.log.uaem
 
 # Prerequisites
 *.d

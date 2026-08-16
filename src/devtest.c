@@ -61,15 +61,17 @@ static int phase_open_close_stress(struct narrator_rb *io)
             printf("  cycle %d: OpenDevice -> %d\n", i, (int)err);
         }
     }
-    printf("Phase 1 Open/Close stress: %d/%d cycles ok%s\n",
-           ok, STRESS_CYCLES, ok == STRESS_CYCLES ? "" : " (FAIL)");
+    printf("Phase 1 Open/Close stress: %d/%d cycles ok\n", ok, STRESS_CYCLES);
+    printf("%s: phase1_open_close_stress\n",
+           ok == STRESS_CYCLES ? "PASS" : "FAIL");
     fflush(stdout);
     return ok == STRESS_CYCLES;
 }
 
 /* Phase 2: two async SendIO writes back-to-back. */
-static void phase_async_queue(struct MsgPort *mp, struct narrator_rb *io)
+static int phase_async_queue(struct MsgPort *mp, struct narrator_rb *io)
 {
+    int ok;
     char *t1 = "This sentence is spoken at full volume.";
     char *t2 = "And this one is much quieter, at about one quarter volume.";
     struct narrator_rb *io2 =
@@ -100,12 +102,19 @@ static void phase_async_queue(struct MsgPort *mp, struct narrator_rb *io)
     printf("  write2 (vol 16) done: io_Error=%d io_Actual=%lu\n",
            (int)io2->message.io_Error, (unsigned long)io2->message.io_Actual);
 
+    ok = (io->message.io_Error == 0 && io->message.io_Actual > 0 &&
+          io2->message.io_Error == 0 && io2->message.io_Actual > 0);
+    printf("%s: phase2_async_queue\n", ok ? "PASS" : "FAIL");
+    fflush(stdout);
+
     DeleteIORequest((struct IORequest *)io2);
+    return ok;
 }
 
 /* Phase 3: ISO-8859-1 input -- codesets transcoding path. */
-static void phase_codesets(struct narrator_rb *io)
+static int phase_codesets(struct narrator_rb *io)
 {
+    int  ok;
     char *t3 = "A caf\xe9 in M\xfcnchen.";   /* é + ü literal ISO-8859-1 */
     io->volume              = MAXVOL;
     io->message.io_Command  = CMD_WRITE;
@@ -115,7 +124,10 @@ static void phase_codesets(struct narrator_rb *io)
     printf("Phase 3 ISO-8859-1 (%ld bytes in): io_Error=%d io_Actual=%lu\n",
            (long)strlen(t3),
            (int)io->message.io_Error, (unsigned long)io->message.io_Actual);
+    ok = (io->message.io_Error == 0 && io->message.io_Actual > 0);
+    printf("%s: phase3_codesets\n", ok ? "PASS" : "FAIL");
     fflush(stdout);
+    return ok;
 }
 
 /* Phase 4: AbortIO + CMD_FLUSH.  Two sub-phases:
@@ -136,12 +148,12 @@ static void phase_codesets(struct narrator_rb *io)
  * "Returns: nothing" convention) -- the device's __AbortIO does return
  * the abort status, but the exec wrapper discards it.  Rely on the
  * post-WaitIO io_Error as the user-visible signal instead. */
-static void phase_abortio_flush(struct MsgPort *mp, struct narrator_rb *io)
+static int phase_abortio_flush(struct MsgPort *mp, struct narrator_rb *io)
 {
     char *t = "This is a short utterance, three.";
     struct narrator_rb *ios[3];
     struct narrator_rb *fio;
-    int  i;
+    int  i, ok4a, ok4b;
 
     /* --- 4a: the "kept" write completes normally. --- */
     io->volume              = MAXVOL;
@@ -151,6 +163,8 @@ static void phase_abortio_flush(struct MsgPort *mp, struct narrator_rb *io)
     DoIO((struct IORequest *)io);
     printf("Phase 4a kept write: io_Error=%d io_Actual=%lu\n",
            (int)io->message.io_Error, (unsigned long)io->message.io_Actual);
+    ok4a = (io->message.io_Error == 0 && io->message.io_Actual > 0);
+    printf("%s: phase4a_kept_write\n", ok4a ? "PASS" : "FAIL");
     fflush(stdout);
 
     /* --- 4b: three queued writes; abort #1, flush #0 and #2. --- */
@@ -181,6 +195,7 @@ static void phase_abortio_flush(struct MsgPort *mp, struct narrator_rb *io)
     printf("Phase 4b AbortIO/CMD_FLUSH (3 writes queued)\n");
     fflush(stdout);
 
+    ok4b = 1;
     for (i = 0; i < 3; i++) {
         const char *tag = (i == 1) ? "aborted" : "flushed";
         WaitIO((struct IORequest *)ios[i]);
@@ -188,18 +203,23 @@ static void phase_abortio_flush(struct MsgPort *mp, struct narrator_rb *io)
                i, tag,
                (int)ios[i]->message.io_Error,
                (unsigned long)ios[i]->message.io_Actual);
+        if (ios[i]->message.io_Error != IOERR_ABORTED) ok4b = 0;
     }
+    printf("%s: phase4b_abortio_flush\n", ok4b ? "PASS" : "FAIL");
+    fflush(stdout);
 
     for (i = 0; i < 3; i++) DeleteIORequest((struct IORequest *)ios[i]);
     DeleteIORequest((struct IORequest *)fio);
+    return ok4a && ok4b;
 }
 
 /* Phase 5: long quoted-clause text -- exercises nw_split's closing-quote
  * peel when split_words > 0 in prefs.  Functional only (we don't observe
  * the split timing here); a non-zero io_Error or zero io_Actual would
  * flag a regression. */
-static void phase_quoted_split(struct narrator_rb *io)
+static int phase_quoted_split(struct narrator_rb *io)
 {
+    int  ok;
     char *q =
         "He paused, then said, \"Welcome to the Amiga.\" "
         "She replied with a smile, \"Yes, the future feels like the past.\" "
@@ -212,7 +232,10 @@ static void phase_quoted_split(struct narrator_rb *io)
     printf("Phase 5 quoted+split (%ld bytes in): io_Error=%d io_Actual=%lu\n",
            (long)strlen(q),
            (int)io->message.io_Error, (unsigned long)io->message.io_Actual);
+    ok = (io->message.io_Error == 0 && io->message.io_Actual > 0);
+    printf("%s: phase5_quoted_split\n", ok ? "PASS" : "FAIL");
     fflush(stdout);
+    return ok;
 }
 
 /* flush_mem(): equivalent of CLI `Avail FLUSH`. AllocMem(~0UL, ...) always
@@ -238,11 +261,17 @@ static void flush_mem(void)
  * have been swept. "Delta = 0" is the ideal; a few hundred bytes from
  * interrupt activity is noise. Single-digit-KB deltas warrant investigation;
  * >10 KB is almost certainly a leak. */
-static void phase_leak_open_close(struct narrator_rb *io)
+/* >10 KB delta after N cycles is almost certainly a leak (see the comment
+ * above); a few hundred bytes of interrupt-activity noise is expected and
+ * not worth failing the run over. */
+#define LEAK_THRESHOLD_BYTES 10240L
+
+static int phase_leak_open_close(struct narrator_rb *io)
 {
     const int N = 100;
     ULONG before, after;
-    int   i, ok = 0;
+    long  delta;
+    int   i, ok = 0, pass;
 
     flush_mem();
     before = AvailMem(MEMF_ANY);
@@ -256,10 +285,14 @@ static void phase_leak_open_close(struct narrator_rb *io)
     }
     flush_mem();
     after = AvailMem(MEMF_ANY);
+    delta = (long)before - (long)after;
 
     printf("Phase 6 leak audit (Open/Close x %d): %d ok  AvailMem delta = %ld bytes\n",
-           N, ok, (long)before - (long)after);
+           N, ok, delta);
+    pass = (ok == N && delta > -LEAK_THRESHOLD_BYTES && delta < LEAK_THRESHOLD_BYTES);
+    printf("%s: phase6_leak_open_close\n", pass ? "PASS" : "FAIL");
     fflush(stdout);
+    return pass;
 }
 
 /* Phase 7: Resource-leak audit -- 10 Open + CMD_WRITE + Close cycles. Each
@@ -267,12 +300,13 @@ static void phase_leak_open_close(struct narrator_rb *io)
  * connect, Wyoming request buffer alloc/free, PCM streaming, AHI open/close.
  * A per-write leak would accumulate ~10x its size; the per-session
  * allocations get one more sweep here on top of phase 6. */
-static void phase_leak_write_cycle(struct narrator_rb *io)
+static int phase_leak_write_cycle(struct narrator_rb *io)
 {
     const int N = 10;
     char *t = "Quick.";
     ULONG before, after;
-    int   i, ok = 0;
+    long  delta;
+    int   i, ok = 0, pass;
 
     flush_mem();
     before = AvailMem(MEMF_ANY);
@@ -291,10 +325,14 @@ static void phase_leak_write_cycle(struct narrator_rb *io)
     }
     flush_mem();
     after = AvailMem(MEMF_ANY);
+    delta = (long)before - (long)after;
 
     printf("Phase 7 leak audit (Open+CMD_WRITE+Close x %d): %d ok  AvailMem delta = %ld bytes\n",
-           N, ok, (long)before - (long)after);
+           N, ok, delta);
+    pass = (ok == N && delta > -LEAK_THRESHOLD_BYTES && delta < LEAK_THRESHOLD_BYTES);
+    printf("%s: phase7_leak_write_cycle\n", pass ? "PASS" : "FAIL");
     fflush(stdout);
+    return pass;
 }
 
 int main(void)
@@ -326,26 +364,33 @@ int main(void)
     }
 
     /* --- Open a session and run the CMD_WRITE / AbortIO phases on it --- */
-    openErr = OpenDevice((STRPTR)"narrator.device", 0,
-                         (struct IORequest *)io, 0);
-    printf("OpenDevice (session for phases 2-5) -> %d\n", (int)openErr);
-    fflush(stdout);
+    {
+        int all_ok = 1;
 
-    if (openErr == 0) {
-        phase_async_queue(mp, io);
-        phase_codesets(io);
-        phase_abortio_flush(mp, io);
-        phase_quoted_split(io);
-        CloseDevice((struct IORequest *)io);
-        printf("CloseDevice ok\n");
+        openErr = OpenDevice((STRPTR)"narrator.device", 0,
+                             (struct IORequest *)io, 0);
+        printf("OpenDevice (session for phases 2-5) -> %d\n", (int)openErr);
+        fflush(stdout);
+
+        if (openErr == 0) {
+            if (!phase_async_queue(mp, io))    all_ok = 0;
+            if (!phase_codesets(io))           all_ok = 0;
+            if (!phase_abortio_flush(mp, io))  all_ok = 0;
+            if (!phase_quoted_split(io))       all_ok = 0;
+            CloseDevice((struct IORequest *)io);
+            printf("CloseDevice ok\n");
+        } else {
+            all_ok = 0;
+        }
+
+        /* --- Phases 6,7: leak audit (own opens; device must be closed first) --- */
+        if (!phase_leak_open_close(io))  all_ok = 0;
+        if (!phase_leak_write_cycle(io)) all_ok = 0;
+
+        DeleteIORequest((struct IORequest *)io);
+        DeleteMsgPort(mp);
+        printf("devtest done\n");
+        printf("%s: devtest\n", all_ok ? "PASS" : "FAIL");
+        return all_ok ? 0 : 1;
     }
-
-    /* --- Phases 6,7: leak audit (own opens; device must be closed first) --- */
-    phase_leak_open_close(io);
-    phase_leak_write_cycle(io);
-
-    DeleteIORequest((struct IORequest *)io);
-    DeleteMsgPort(mp);
-    printf("devtest done\n");
-    return 0;
 }

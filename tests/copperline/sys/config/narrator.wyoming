@@ -1,0 +1,10 @@
+# CI on-target smoke test settings -- read by wyomingtest (src/main.c
+# read_config()) since Amiga argv is unusable from the startup-sequence.
+# text must match tests/golden/wyomingtest.pcm's request (see
+# ../../../run_golden.sh) so both the host and on-target runs check the
+# same fixture output from ../../../mock_wyoming_server.py.
+host 127.0.0.1
+port 48215
+text The quick brown fox jumps over the lazy dog.
+out wyomingtest.pcm
+runs 1

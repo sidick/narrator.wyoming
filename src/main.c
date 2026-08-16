@@ -226,17 +226,23 @@ int main(int argc, char **argv)
         read_config("Narrator:config/narrator.wyoming");
 
 #ifndef PLATFORM_AMIGA
-    /* On the host, argv is reliable and overrides the config file. */
-    for (i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--text") && i + 1 < argc) set_str(g_text, sizeof g_text, argv[++i]);
-        else if (!strcmp(argv[i], "--voice") && i + 1 < argc) set_str(g_voice, sizeof g_voice, argv[++i]);
-        else if (!strcmp(argv[i], "--language") && i + 1 < argc) set_str(g_language, sizeof g_language, argv[++i]);
-        else if (!strcmp(argv[i], "--speaker") && i + 1 < argc) set_str(g_speaker, sizeof g_speaker, argv[++i]);
-        else if (!strcmp(argv[i], "--out") && i + 1 < argc) set_str(g_out, sizeof g_out, argv[++i]);
-        else if (!strcmp(argv[i], "--runs") && i + 1 < argc) g_runs = atoi(argv[++i]);
-        else if (argv[i][0] == '-') { fprintf(stderr, "unknown option: %s\n", argv[i]); return 2; }
-        else if (!g_host[0]) set_str(g_host, sizeof g_host, argv[i]);
-        else g_port = atoi(argv[i]);
+    /* On the host, argv is reliable and overrides the config file. A
+     * positional host/port must win even when read_config() already set
+     * g_host from a local config file -- gate on whether argv itself has
+     * supplied the host yet, not on whether g_host is merely non-empty. */
+    {
+        int argv_host_set = 0;
+        for (i = 1; i < argc; i++) {
+            if (!strcmp(argv[i], "--text") && i + 1 < argc) set_str(g_text, sizeof g_text, argv[++i]);
+            else if (!strcmp(argv[i], "--voice") && i + 1 < argc) set_str(g_voice, sizeof g_voice, argv[++i]);
+            else if (!strcmp(argv[i], "--language") && i + 1 < argc) set_str(g_language, sizeof g_language, argv[++i]);
+            else if (!strcmp(argv[i], "--speaker") && i + 1 < argc) set_str(g_speaker, sizeof g_speaker, argv[++i]);
+            else if (!strcmp(argv[i], "--out") && i + 1 < argc) set_str(g_out, sizeof g_out, argv[++i]);
+            else if (!strcmp(argv[i], "--runs") && i + 1 < argc) g_runs = atoi(argv[++i]);
+            else if (argv[i][0] == '-') { fprintf(stderr, "unknown option: %s\n", argv[i]); return 2; }
+            else if (!argv_host_set) { set_str(g_host, sizeof g_host, argv[i]); argv_host_set = 1; }
+            else g_port = atoi(argv[i]);
+        }
     }
 #else
     (void)argc; (void)argv;
