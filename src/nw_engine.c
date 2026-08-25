@@ -596,8 +596,13 @@ static struct NW *session_create(struct ExecBase *SysBase)
     if (!s->SocketBase) { FreeMem(s, (ULONG)sizeof(struct NW)); return 0; }
     {
         struct Library *SocketBase = s->SocketBase;
-        SocketBaseTags(SBTM_SETVAL(SBTC_ERRNOPTR(sizeof(s->err))),
-                       (long)&s->err, TAG_END);
+        /* SocketBaseTagList, not the SocketBaseTags vararg macro -- see the
+         * matching comment in net_amiga.c's net_init(). */
+        struct TagItem tags[2];
+        tags[0].ti_Tag  = SBTM_SETVAL(SBTC_ERRNOPTR(sizeof(s->err)));
+        tags[0].ti_Data = (ULONG)&s->err;
+        tags[1].ti_Tag  = TAG_END;
+        SocketBaseTagList(tags);
     }
     /* Soft-open codesets.library: only used when caller text is non-UTF-8.
      * If the library or either codeset isn't there, transcoding is skipped

@@ -59,10 +59,17 @@ int net_init(void)
     /* Tell bsdsocket where this task's errno lives. Mandatory: without it, any
      * socket call that sets errno (e.g. recv hitting EWOULDBLOCK) writes through
      * an unset pointer and corrupts memory -> Guru. connect()/send() happened to
-     * succeed without setting errno, which is why only recv() crashed. */
-    SocketBaseTags(
-        SBTM_SETVAL(SBTC_ERRNOPTR(sizeof(errno))), (long)&errno,
-        TAG_END);
+     * succeed without setting errno, which is why only recv() crashed.
+     * SocketBaseTagList with an explicit array, not the SocketBaseTags vararg
+     * macro: some NDK revisions' inline/bsdsocket.h expands that macro using a
+     * _sfdc_vararg type no header on the include path defines. */
+    {
+        struct TagItem tags[2];
+        tags[0].ti_Tag  = SBTM_SETVAL(SBTC_ERRNOPTR(sizeof(errno)));
+        tags[0].ti_Data = (ULONG)&errno;
+        tags[1].ti_Tag  = TAG_END;
+        SocketBaseTagList(tags);
+    }
 
     /* Best-effort timer setup; if it fails, net_now_ms() returns 0 and the
      * latency figures read as 0 rather than crashing. */
