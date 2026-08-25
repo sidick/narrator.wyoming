@@ -33,6 +33,23 @@
 # restores the original User-Startup on exit regardless of outcome.
 #
 # Usage: tests/run_nondist.sh (run from the repo root)
+#
+# Audio capture uses Copperline 0.17+ per-source stems (--audio-stems)
+# rather than the old mixed --audio-wav: build/stems/ gets master.wav plus
+# one WAV per active source (paula.wav, drivesounds.wav, toccata.wav, ...),
+# and the speech check runs against the stem the device is expected to
+# play through -- so a floppy click in the mix can't mask silent speech.
+# Stems are kept after the run for listening/comparison.
+#
+#   AUDIO_SOURCE=paula (default)  check speech in the Paula stem
+#   AUDIO_SOURCE=toccata          enable Copperline's Toccata board and
+#                                 check speech in the Toccata stem instead.
+#                                 Needs the nondist Workbench set up for it:
+#                                 toccata.audio in Devs:AHI + an AudioModes
+#                                 entry, and the AHI unit given via AHI_UNIT
+#                                 configured to a Toccata mode.
+#   AHI_UNIT=N                    add `ahi_unit N` to the generated prefs
+#                                 (unset = device default, unit 0)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -43,6 +60,14 @@ BENCH_SECS=${BENCH_SECS:-180}   # generous: real Workbench boot + devtest's
                                  # own several CMD_WRITEs each pace to real
                                  # AHI playback time, not just network RTT.
 AUDIO_MIN_DURATION=2.0
+AUDIO_SOURCE=${AUDIO_SOURCE:-paula}
+AHI_UNIT=${AHI_UNIT:-}
+STEMS_DIR="$ROOT/build/stems"
+
+case "$AUDIO_SOURCE" in
+    paula|toccata) ;;
+    *) echo "run_nondist.sh: AUDIO_SOURCE must be paula or toccata" >&2; exit 1 ;;
+esac
 
 ROM=$(ls nondist/Kickstarts/*.rom 2>/dev/null | head -1 || true)
 HDDIR="nondist/HardDrives/narrator"
@@ -101,6 +126,14 @@ volume = "Narrator"
 net = "host"
 EOF
 
+if [ "$AUDIO_SOURCE" = "toccata" ]; then
+    cat >>"$TOML" <<EOF
+
+[toccata]
+enabled = true
+EOF
+fi
+
 # A temp prefs file has to live under one of the two mounted [[filesys]]
 # volumes to be reachable from the guest at all -- $WORK (mktemp -d, under
 # /tmp) isn't mounted, so this goes at the repo root instead (gitignored).
@@ -120,6 +153,7 @@ port $MOCK_PORT
 runs 1
 text Regression test utterance.
 EOF
+[ -n "$AHI_UNIT" ] && echo "ahi_unit $AHI_UNIT" >>"$PREFS_FILE"
 
 cp "$USER_STARTUP" "$WORK/User-Startup.orig"
 # Doesn't `Execute Narrator:boot` for the Say portion -- boot's own first
@@ -145,9 +179,14 @@ python3 tests/mock_wyoming_server.py "$MOCK_PORT" tests/golden/fixture.pcm \
     22050 2 1 0 >/tmp/run-nondist-srv.log 2>&1 &
 srv_pid=$!
 
-echo "booting under Copperline (benchmark-until ${BENCH_SECS}s emulated)..."
+mkdir -p "$STEMS_DIR"
+rm -f "$STEMS_DIR"/*.wav
+
+echo "booting under Copperline (benchmark-until ${BENCH_SECS}s emulated," \
+     "checking the $AUDIO_SOURCE stem)..."
 timeout 400 copperline --config "$TOML" \
-    --audio-wav "$WORK/capture.wav" --benchmark-until "$BENCH_SECS"
+    --audio-stems "$STEMS_DIR" --audio-stems-mode master,source \
+    --benchmark-until "$BENCH_SECS"
 
 kill "$srv_pid" 2>/dev/null || true
 wait "$srv_pid" 2>/dev/null || true
@@ -171,15 +210,22 @@ for name in devtest failtest; do
     echo "-------------"
 done
 
-if [ -f "$WORK/capture.wav" ]; then
-    python3 tests/check_audio_wav.py "$WORK/capture.wav" "$AUDIO_MIN_DURATION" || fail=1
+# The speech check runs against the per-source stem, not the master mix:
+# master.wav also carries drive sounds etc., which could mask a silent
+# device. Stems for the other active sources are left in $STEMS_DIR for
+# listening/A-B comparison (e.g. paula vs toccata aliasing).
+STEM="$STEMS_DIR/$AUDIO_SOURCE.wav"
+if [ -f "$STEM" ]; then
+    python3 tests/check_audio_wav.py "$STEM" "$AUDIO_MIN_DURATION" || fail=1
 else
-    echo "FAIL: no audio-wav capture was written"
+    echo "FAIL: no $AUDIO_SOURCE stem was written (see $STEMS_DIR)"
     fail=1
 fi
+echo "stems kept in $STEMS_DIR:"
+ls -l "$STEMS_DIR" 2>/dev/null || true
 
 if [ "$fail" -eq 0 ]; then
-    echo "PASS: run_nondist (devtest + failtest + Say, real AHI audio confirmed)"
+    echo "PASS: run_nondist (devtest + failtest + Say, real AHI audio confirmed via $AUDIO_SOURCE stem)"
 else
     echo "FAIL: run_nondist"
 fi
