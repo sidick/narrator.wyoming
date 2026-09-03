@@ -37,14 +37,17 @@ voice_female  en_US-amy-medium       # used when narrator_rb.sex == FEMALE
 # --- AHI audio mode (optional) ---
 # AHI mode ID (AHIA_AudioID) to play through. Default 0x0002000f is paula
 # HiFi 14 bit mono calibrated -- the highest-quality paula mono mode and the
-# right portable default for real hardware. On Amiberry, the emulator-specific
-# drivers measure cleaner per docs/audio-capture-rig.md:
-#   0x003b0002   uaesnd: HiFi Stereo
-#   0x001a0000   UAE 16 bit HIFI Stereo++
+# right portable default for real hardware. Under emulation the emulator's
+# own drivers (e.g. 0x003b0002 uaesnd: HiFi Stereo) may measure cleaner.
 # Pick whichever is configured in your AHI prefs as your music-app mode. Hex
 # (0x...) or decimal both work. The device reopens AHI on the new mode at the
 # next CMD_WRITE if you change this at runtime.
 audio_mode 0x0002000f
+
+# Alternatively, pick the mode by AHI device unit number: `ahi_unit N` plays
+# through whatever mode your AHI prefs assign to unit N (read from
+# ENV:Sys/ahi.prefs). An explicit audio_mode wins over ahi_unit.
+#ahi_unit 0
 
 # --- Output level / headroom (optional) ---
 # AHI output level as a percent of full scale (1..100; default 80). Piper's PCM

@@ -26,10 +26,11 @@ struct nwprefs {
     unsigned long audio_mode;/* AHI audio mode ID (AHIA_AudioID) to play through.
                               * Default 0x0002000f (paula HiFi 14 bit mono
                               * calibrated — highest-quality paula mode that
-                              * works on real hardware). For Amiberry, 0x003b0002
-                              * (uaesnd HiFi Stereo) or 0x001a0000 (UAE 16 bit
-                              * HIFI Stereo++) measure cleaner. See
-                              * docs/audio-capture-rig.md. */
+                              * works on real hardware). Under emulation the
+                              * emulator's own drivers (e.g. uaesnd) may
+                              * measure cleaner. Also settable indirectly via
+                              * the `ahi_unit` pref (unit's mode looked up in
+                              * ENV:Sys/ahi.prefs). */
     int  split_words;        /* 0 = off (whole text in one request); >0 = split
                               * the text into pipelined chunks of ~this many
                               * words for faster time-to-first-audio on long
