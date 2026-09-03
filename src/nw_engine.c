@@ -252,47 +252,6 @@ static void pref_get(const char *buf, const char *key, char *out, long outlen)
     }
 }
 
-/* Resolve an AHI device unit number to the audio mode ID configured for it
- * in the user's AHI prefs (ENV:Sys/ahi.prefs — IFF FORM PREF with one AHIU
- * chunk per unit: ahiup_Unit at data offset 0, ahiup_AudioMode at offset 4,
- * both big-endian). Lets the `ahi_unit N` pref keep working against the
- * library-interface engine, which selects by AHIA_AudioID, not by unit:
- * we play through the same mode ahi.device unit N would have used.
- * On any parse/open failure *mode_out is left untouched. */
-static void ahi_unit_to_mode(struct DosLibrary *DOSBase,
-                             struct ExecBase *SysBase,
-                             long unit, unsigned long *mode_out)
-{
-    BPTR fh = Open((STRPTR)"ENV:Sys/ahi.prefs", MODE_OLDFILE);
-    unsigned char *b;
-    if (!fh) return;
-    b = (unsigned char *)AllocMem(2048, MEMF_PUBLIC);
-    if (b) {
-        LONG n = Read(fh, (APTR)b, 2048);
-        long i;
-        for (i = 0; i + 16 <= n; i++) {
-            if (b[i] == 'A' && b[i+1] == 'H' && b[i+2] == 'I' && b[i+3] == 'U') {
-                unsigned long clen = ((unsigned long)b[i+4] << 24) |
-                                     ((unsigned long)b[i+5] << 16) |
-                                     ((unsigned long)b[i+6] << 8)  |
-                                      (unsigned long)b[i+7];
-                const unsigned char *d = b + i + 8;
-                if (clen < 8 || (long)(i + 8 + clen) > n) break;  /* malformed */
-                if (d[0] == (unsigned char)unit) {
-                    *mode_out = ((unsigned long)d[4] << 24) |
-                                ((unsigned long)d[5] << 16) |
-                                ((unsigned long)d[6] << 8)  |
-                                 (unsigned long)d[7];
-                    break;
-                }
-                i += 7 + (long)clen;    /* loop's i++ lands on the next chunk */
-            }
-        }
-        FreeMem(b, 2048);
-    }
-    Close(fh);
-}
-
 void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
 {
     struct ExecBase   *SysBase = sysbase;
@@ -304,7 +263,10 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
     copy_str(pr->voice,        (long)sizeof(pr->voice),        NW_DEFAULT_VOICE);
     copy_str(pr->voice_male,   (long)sizeof(pr->voice_male),   NW_DEFAULT_VOICE_MALE);
     copy_str(pr->voice_female, (long)sizeof(pr->voice_female), NW_DEFAULT_VOICE_FEMALE);
-    pr->audio_mode = 0x0002000fUL;  /* paula HiFi 14 bit mono calibrated */
+    pr->audio_mode = AHI_DEFAULT_ID; /* = the user's "Music unit" mode from
+                                      * Prefs/AHI — the documented default
+                                      * for low-level (library-interface)
+                                      * programs with no mode UI of their own */
     pr->split_words = 0;       /* off by default = whole text in one request */
     pr->gain = 80;             /* % of full scale; <100 = headroom for hot peaks */
     pr->capture[0] = '\0';     /* capture off unless user sets a path             */
@@ -320,17 +282,19 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
                 LONG n = Read(fh, buf, 2047);
                 if (n > 0) {
                     char portstr[16], splitstr[16], modestr[24], gainstr[16];
-                    char unitstr[16];
                     buf[n] = '\0';
                     portstr[0] = '\0'; splitstr[0] = '\0'; modestr[0] = '\0';
-                    gainstr[0] = '\0'; unitstr[0] = '\0';
+                    gainstr[0] = '\0';
                     pref_get(buf, "host", pr->host, (long)sizeof(pr->host));
                     pref_get(buf, "port", portstr, (long)sizeof(portstr));
                     pref_get(buf, "voice", pr->voice, (long)sizeof(pr->voice));
                     pref_get(buf, "voice_male", pr->voice_male, (long)sizeof(pr->voice_male));
                     pref_get(buf, "voice_female", pr->voice_female, (long)sizeof(pr->voice_female));
                     pref_get(buf, "audio_mode", modestr, (long)sizeof(modestr));
-                    pref_get(buf, "ahi_unit", unitstr, (long)sizeof(unitstr));
+                    /* `ahi_unit` (the old device-interface knob) is silently
+                     * ignored: the library-interface engine selects by
+                     * AHIA_AudioID, and its default (AHI_DEFAULT_ID) already
+                     * follows the user's AHI-prefs "Music unit" setting. */
                     pref_get(buf, "split_words", splitstr, (long)sizeof(splitstr));
                     pref_get(buf, "gain", gainstr, (long)sizeof(gainstr));
                     pref_get(buf, "capture", pr->capture, (long)sizeof(pr->capture));
@@ -360,14 +324,6 @@ void nw_read_prefs(struct ExecBase *sysbase, struct nwprefs *pr)
                             }
                         }
                         if (v != 0) pr->audio_mode = v;
-                    }
-                    /* `ahi_unit N` (the pre-library-interface knob) still
-                     * works: resolve unit N's configured mode from the AHI
-                     * prefs. An explicit audio_mode wins over ahi_unit. */
-                    if (unitstr[0] && !modestr[0]) {
-                        long v = 0; const char *q = unitstr;
-                        while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
-                        ahi_unit_to_mode(DOSBase, SysBase, v, &pr->audio_mode);
                     }
                     if (splitstr[0]) {
                         long v = 0; const char *q = splitstr;

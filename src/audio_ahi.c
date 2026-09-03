@@ -5,9 +5,9 @@
 /* audio_ahi.c — Amiga backend for audio.h: AHI v4 library-interface streaming.
  *
  * Uses AHI's library interface (AHI_AllocAudio + AHI_LoadSound + AHI_Play)
- * with an explicit AHIA_AudioID so the audio mode is OUR choice, not whatever
- * the user happens to have on ahi.device unit 0. Default mode is paula HiFi
- * 14-bit mono calibrated (0x0002000f); the caller may override via
+ * with an AHIA_AudioID under our control. Default mode is AHI_DEFAULT_ID,
+ * which AHI resolves to the user's "Music unit" mode from Prefs/AHI — the
+ * documented default for low-level programs; the caller may override via
  * audio_set_mode() before audio_open().
  *
  * Streaming v2: one large AHIST_DYNAMICSAMPLE buffer played NON-LOOPING.
@@ -78,7 +78,7 @@ static long                  g_buf_size;
 static long                  g_write_pos;
 static unsigned long         g_rate;
 static int                   g_type;
-static unsigned long         g_mode_id = 0x0002000fUL;  /* paula HiFi 14-bit mono cal */
+static unsigned long         g_mode_id = AHI_DEFAULT_ID; /* = Prefs/AHI "Music unit" */
 
 /* Copy `len` bytes of LE 16-bit PCM from src to dst, byteswapping each
  * 16-bit sample to BE. Writes one word per sample so the 68k MOVE.W

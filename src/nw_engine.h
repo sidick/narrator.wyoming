@@ -24,13 +24,11 @@ struct nwprefs {
     char voice_male[64];
     char voice_female[64];
     unsigned long audio_mode;/* AHI audio mode ID (AHIA_AudioID) to play through.
-                              * Default 0x0002000f (paula HiFi 14 bit mono
-                              * calibrated — highest-quality paula mode that
-                              * works on real hardware). Under emulation the
-                              * emulator's own drivers (e.g. uaesnd) may
-                              * measure cleaner. Also settable indirectly via
-                              * the `ahi_unit` pref (unit's mode looked up in
-                              * ENV:Sys/ahi.prefs). */
+                              * Default AHI_DEFAULT_ID (0), which AHI resolves
+                              * to the user's "Music unit" mode from Prefs/AHI
+                              * — the documented default for low-level
+                              * programs. An explicit `audio_mode` pref
+                              * overrides it. */
     int  split_words;        /* 0 = off (whole text in one request); >0 = split
                               * the text into pipelined chunks of ~this many
                               * words for faster time-to-first-audio on long
