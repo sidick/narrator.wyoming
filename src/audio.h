@@ -20,9 +20,12 @@
  * The AHI backend ignores this. */
 void audio_set_outfile(const char *path);
 
-/* AHI backend only: choose the ahi.device unit before audio_open() (default 0).
- * The host backend ignores this. */
-void audio_set_unit(int unit);
+/* AHI backend only: choose the AHI audio mode (AHIA_AudioID) before
+ * audio_open(). Default is 0x0002000f (paula HiFi 14 bit mono calibrated) —
+ * the highest-fidelity paula mono mode that works on real hardware. Override
+ * for Amiberry-only modes like uaesnd (0x003b0002) or UAE (0x001a0000) if
+ * those are preferred. The host backend ignores this. */
+void audio_set_mode(unsigned long mode_id);
 
 /* Open the sink for the given PCM format (width in bytes, e.g. 2 for 16-bit).
  * Returns 0 on success, <0 on error. */

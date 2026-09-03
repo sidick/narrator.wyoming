@@ -23,9 +23,12 @@ struct nwprefs {
     char voice[64];          /* default voice (used if no sex-specific match) */
     char voice_male[64];
     char voice_female[64];
-    int  ahi_unit;           /* ahi.device unit to play through (default 0) — set
-                              * this to target a specific AHI mode/card when the
-                              * user has more than one unit configured */
+    unsigned long audio_mode;/* AHI audio mode ID (AHIA_AudioID) to play through.
+                              * Default AHI_DEFAULT_ID (0), which AHI resolves
+                              * to the user's "Music unit" mode from Prefs/AHI
+                              * — the documented default for low-level
+                              * programs. An explicit `audio_mode` pref
+                              * overrides it. */
     int  split_words;        /* 0 = off (whole text in one request); >0 = split
                               * the text into pipelined chunks of ~this many
                               * words for faster time-to-first-audio on long
@@ -36,11 +39,13 @@ struct nwprefs {
                               * peaks -> harsh clipping; <100 leaves headroom so
                               * peaks no longer hit the ceiling. Lower it further
                               * if loud peaks still distort. */
-    int  smooth;             /* high-cut strength: 0 = off, N = cascade passes of
-                              * a (x+x_prev)/2 averager applied before AHI. Tames
-                              * the 8-11 kHz sibilance that AHI's resample + 8-bit
-                              * Paula turn harsh, while leaving speech body intact.
-                              * Default 2 (validated on-target); 1 is gentler. */
+    char capture[128];       /* if non-empty, also write the raw little-endian PCM
+                              * Wyoming sent us to this AmigaDOS path as a WAV
+                              * file (no pre-roll silence; only actual data).
+                              * Spans one device-task lifetime; one CMD_WRITE may
+                              * concat many synthesis chunks. Empty = capture
+                              * off. Useful for the audio-quality investigation
+                              * rig in docs/audio-capture-rig.md. */
 };
 
 /* Fill *p with defaults, then overlay ENV:narrator.wyoming if present. */

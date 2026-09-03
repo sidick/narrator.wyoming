@@ -34,12 +34,18 @@ voice         en_US-lessac-medium    # default / fallback voice
 voice_male    en_US-lessac-medium    # used when narrator_rb.sex == MALE (Say's default)
 voice_female  en_US-amy-medium       # used when narrator_rb.sex == FEMALE
 
-# --- AHI output unit (optional) ---
-# Which ahi.device unit to play through. Leave at 0 (AHI's default unit) unless
-# you have configured more than one AHI unit (different modes/cards in AHI prefs)
-# and want narrator to use a specific one. Changing it at runtime makes the
-# device reopen AHI on the new unit at the next CMD_WRITE.
-ahi_unit 0
+# --- AHI audio mode (optional) ---
+# By default the device plays through your AHI "Music unit" settings: run
+# Prefs/AHI, open the "Mode settings" page and configure the "Music unit"
+# (mode + frequency) — the standard AHI prefs GUI is the config UI, nothing
+# needed here. To override with an explicit AHI mode ID (AHIA_AudioID)
+# instead, set `audio_mode`; hex (0x...) or decimal both work. E.g.
+# 0x0002000f is paula HiFi 14 bit mono calibrated. The device reopens AHI on
+# the new mode at the next CMD_WRITE if you change this at runtime.
+#audio_mode 0x0002000f
+
+# (`ahi_unit N` from older versions is obsolete and silently ignored — the
+# engine selects by mode ID now, not by ahi.device unit.)
 
 # --- Output level / headroom (optional) ---
 # AHI output level as a percent of full scale (1..100; default 80). Piper's PCM
@@ -50,16 +56,16 @@ ahi_unit 0
 # raise it toward 100 for maximum loudness if your output stays clean.
 gain 80
 
-# --- Sibilance / high-cut (optional) ---
-# AHI's resample to Paula's rate plus 8-bit Paula output turn the 8-11 kHz "s"
-# band harsh/sibilant on-target (the source PCM is clean — it's the playback
-# chain). `smooth` applies a gentle high-cut (a cascade of N (x+x_prev)/2
-# averagers) before handing PCM to AHI: a null at Nyquist, strong cut at 8 kHz,
-# near-untouched below ~3 kHz, so it tames the essiness while keeping speech
-# intelligible. 0 = off, 1 = gentle, 2 = stronger (default — validated to tame
-# the essiness without dulling speech). Raise it if "s" still hisses; drop it
-# (1, or 0 = off) if speech sounds muffled.
-smooth 2
+# --- PCM capture (optional, for audio-quality investigation) ---
+# When set to an AmigaDOS path, the device also writes a WAV copy of the raw
+# little-endian PCM Wyoming sent us (no per-utterance silence pre-roll, only
+# actual data). Format mirrors Wyoming's: 22050Hz / 16-bit / mono. Spans one
+# device session (OpenDevice..CloseDevice); overwritten each open. Empty (or
+# omitted) = capture off. Useful target: Narrator:capture.wav (lands in the
+# repo root on the host via the Amiberry mount). Off by default. See
+# docs/audio-capture-rig.md for how to A/B against a BlackHole loopback
+# recording of the speaker-out.
+# capture Narrator:capture.wav
 
 # --- Latency: split long input into pipelined chunks (optional) ---
 # Piper synthesizes one SENTENCE at a time, so a single long sentence has to be

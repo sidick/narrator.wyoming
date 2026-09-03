@@ -46,10 +46,12 @@
 #                                 check speech in the Toccata stem instead.
 #                                 Needs the nondist Workbench set up for it:
 #                                 toccata.audio in Devs:AHI + an AudioModes
-#                                 entry, and the AHI unit given via AHI_UNIT
-#                                 configured to a Toccata mode.
-#   AHI_UNIT=N                    add `ahi_unit N` to the generated prefs
-#                                 (unset = device default, unit 0)
+#                                 entry -- and pass AUDIO_MODE=0x000a0003
+#                                 (Toccata:16 bit stereo) so the device plays
+#                                 through the Toccata driver.
+#   AUDIO_MODE=0x...              add `audio_mode $AUDIO_MODE` to the
+#                                 generated prefs (unset = device default,
+#                                 AHI_DEFAULT_ID = the AHI-prefs Music unit)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -61,7 +63,7 @@ BENCH_SECS=${BENCH_SECS:-180}   # generous: real Workbench boot + devtest's
                                  # AHI playback time, not just network RTT.
 AUDIO_MIN_DURATION=2.0
 AUDIO_SOURCE=${AUDIO_SOURCE:-paula}
-AHI_UNIT=${AHI_UNIT:-}
+AUDIO_MODE=${AUDIO_MODE:-}
 STEMS_DIR="$ROOT/build/stems"
 
 case "$AUDIO_SOURCE" in
@@ -153,7 +155,7 @@ port $MOCK_PORT
 runs 1
 text Regression test utterance.
 EOF
-[ -n "$AHI_UNIT" ] && echo "ahi_unit $AHI_UNIT" >>"$PREFS_FILE"
+[ -n "$AUDIO_MODE" ] && echo "audio_mode $AUDIO_MODE" >>"$PREFS_FILE"
 
 cp "$USER_STARTUP" "$WORK/User-Startup.orig"
 # Doesn't `Execute Narrator:boot` for the Say portion -- boot's own first

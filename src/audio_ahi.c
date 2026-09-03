@@ -2,16 +2,33 @@
  * Copyright (c) 2026 Simon Dick
  */
 
-/* audio_ahi.c — Amiga backend for audio.h: AHI v4 double-buffered streaming.
+/* audio_ahi.c — Amiga backend for audio.h: AHI v4 library-interface streaming.
  *
- * Uses the low-level ahi.device CMD_WRITE interface with two ping-ponging
- * AHIRequests. ahir_Link chains buffer N+1 onto buffer N so playback is
- * gapless; we WaitIO the buffer that just finished, refill it, and re-queue.
- * audio_write() blocks when both buffers are busy, which paces the network
- * read to playback speed — i.e. streaming.
+ * Uses AHI's library interface (AHI_AllocAudio + AHI_LoadSound + AHI_Play)
+ * with an AHIA_AudioID under our control. Default mode is AHI_DEFAULT_ID,
+ * which AHI resolves to the user's "Music unit" mode from Prefs/AHI — the
+ * documented default for low-level programs; the caller may override via
+ * audio_set_mode() before audio_open().
  *
- * Opened on AHI unit 0 (the user's AHI prefs "Unit 0" mode); AHI does the
- * mixing / rate-conversion from our 22050Hz/16-bit/mono samples to the mode.
+ * Streaming v2: one large AHIST_DYNAMICSAMPLE buffer played NON-LOOPING.
+ * audio_open allocates the buffer (silence-filled via MEMF_CLEAR) and
+ * registers it with AHI_LoadSound. audio_write copies incoming PCM into
+ * the buffer from the front, byteswapping LE -> BE atomically per 16-bit
+ * sample (in-place swap would race AHI mid-play; copy-swap doesn't —
+ * each destination short is written exactly once). The first real write
+ * starts AHI_Play; subsequent writes just advance the write head. AHI's
+ * play head follows naturally. audio_close Delays for the audio duration
+ * then stops the mixer.
+ *
+ * Why one-shot non-looping: a small DYNAMICSAMPLE ring with looping +
+ * frequent small mid-stream writes produces a ~50/50 audio/silence duty
+ * cycle on Amiberry's paula HiFi mode (almost certainly a mix-buffer
+ * cache + loop race). Non-looping playback reads each byte exactly once
+ * so the race can't trigger. See docs/streaming-v2-notes.md for the
+ * full investigation.
+ *
+ * First-audio latency: ~one Wyoming chunk's recv time + AHI startup
+ * (vs v1 buffered's "whole utterance receive + then play" latency).
  */
 #ifdef PLATFORM_AMIGA
 
@@ -22,180 +39,214 @@
 #include <devices/ahi.h>
 
 #include <proto/exec.h>
+#include <proto/dos.h>
+#include <proto/ahi.h>
 
 #include <string.h>
 #include <stdio.h>
 
-#define NBUF    2
-#define BUFSIZE 8192       /* per buffer; ~0.19s at 44100 bytes/s */
+/* Sized for ~11.6 s of audio at 22050 Hz / 16-bit / mono — covers any
+ * single split_words chunk and most full utterances. Beyond this we
+ * truncate (audio_write returns -1 once full). */
+#define BUF_BYTES (512L * 1024L)
 
-static struct MsgPort    *g_port;
-static struct AHIRequest *g_req[NBUF];
-static unsigned char     *g_buf[NBUF];
-static int                g_opened;     /* OpenDevice succeeded            */
-static int                g_haveReq1;   /* g_req[1] allocated              */
-static int                g_queued[NBUF];
-static int                g_fill;       /* buffer currently being filled   */
-static long               g_fillpos;
-static int                g_primed;     /* both buffers queued before start*/
-static unsigned long      g_rate;
-static int                g_type;       /* AHIST_M16S / AHIST_S16S         */
-static int                g_unit;       /* ahi.device unit (default 0)     */
+/* Head start before AHI_Play kicks in. With less than this much audio
+ * buffered, the write head can fall behind AHI's mix-buffer read-ahead
+ * (~50 ms internally) on network-paced producers, and AHI reads the
+ * MEMF_CLEAR silence at the gap → audible click at every ~chunk-write
+ * boundary. ~370 ms covers AHI's read-ahead plus typical network
+ * jitter on a real LAN. Trade-off: first-audio latency picks up
+ * ~370 ms of "buffer first" instead of starting on chunk 1, but
+ * Piper's wyoming-piper streams the first ~370 ms in well under
+ * 100 ms on a fast LAN, so the effective added latency is the
+ * network gap, not the wall time of 370 ms of audio. If audio_close
+ * is reached with less buffered (very short utterance), we kick off
+ * Play there with whatever we have. */
+#define PLAY_HEADSTART_BYTES (32L * 1024L)
 
-/* Piper/Wyoming PCM is 16-bit signed LITTLE-endian; AHI (AHIST_M16S) wants the
- * Amiga's native BIG-endian order, or it plays as static. Swap each sample in
- * place before playback. Buffer boundaries are even, so samples never straddle
- * a submitted buffer. */
-static void swap16(unsigned char *b, long n)
+struct Library *AHIBase;
+
+static struct MsgPort       *g_port;
+static struct AHIRequest    *g_req;
+static struct AHIAudioCtrl  *g_ctrl;
+static int                   g_opened;
+static int                   g_alloced;
+static int                   g_loaded;
+static int                   g_play_started;
+static unsigned char        *g_buf;
+static long                  g_buf_size;
+static long                  g_write_pos;
+static unsigned long         g_rate;
+static int                   g_type;
+static unsigned long         g_mode_id = AHI_DEFAULT_ID; /* = Prefs/AHI "Music unit" */
+
+/* Copy `len` bytes of LE 16-bit PCM from src to dst, byteswapping each
+ * 16-bit sample to BE. Writes one word per sample so the 68k MOVE.W
+ * makes the swap bus-atomic — AHI either sees the old word (silence)
+ * or the new (correct sample), never a half-byte mix. Both pointers
+ * must be 2-byte aligned; AllocMem gives 4-byte alignment and Wyoming
+ * PCM chunks are 16-bit aligned naturally. */
+static void copy_swap16(unsigned char *dst, const unsigned char *src, long len)
 {
-    long i;
-    for (i = 0; i + 1 < n; i += 2) {
-        unsigned char t = b[i]; b[i] = b[i + 1]; b[i + 1] = t;
+    /* Reading two adjacent bytes as a 68k word gives (byte0 << 8) | byte1.
+     * Since src is LE (byte0 = low, byte1 = high), the read value is
+     * actually the BYTE-SWAPPED sample. We swap once more — (v >> 8) |
+     * (v << 8) — to get the correct sample value, then the MOVE.W to
+     * dst[i] writes it in 68k-native BE order, which is what AHI wants. */
+    short                 *d = (short *)dst;
+    const unsigned short  *s = (const unsigned short *)src;
+    long                   n = len >> 1;
+    long                   i;
+    for (i = 0; i < n; i++) {
+        unsigned short v = s[i];
+        d[i] = (short)((v >> 8) | (v << 8));
     }
 }
 
-static void submit(int i, long bytes)
-{
-    struct AHIRequest *r = g_req[i];
-    swap16(g_buf[i], bytes);            /* little-endian PCM -> AHI big-endian */
-    r->ahir_Std.io_Command = CMD_WRITE;
-    r->ahir_Std.io_Data    = g_buf[i];
-    r->ahir_Std.io_Length  = (ULONG)bytes;
-    r->ahir_Std.io_Offset  = 0;
-    r->ahir_Frequency      = g_rate;
-    r->ahir_Type           = g_type;
-    r->ahir_Volume         = 0x10000;   /* 1.0  (Fixed 16.16), full        */
-    r->ahir_Position       = 0x8000;    /* 0.5  centre                     */
-    r->ahir_Link           = g_queued[1 - i] ? g_req[1 - i] : NULL;
-    SendIO((struct IORequest *)r);
-    g_queued[i] = 1;
-}
-
-static void wait_free(int i)
-{
-    if (g_queued[i]) {
-        WaitIO((struct IORequest *)g_req[i]);
-        g_queued[i] = 0;
-    }
-}
+static void start_play(void);
 
 void audio_set_outfile(const char *path) { (void)path; }
-void audio_set_unit(int unit) { g_unit = unit; }
+void audio_set_mode(unsigned long mode_id) { g_mode_id = mode_id; }
 
 int audio_open(int rate, int width, int channels)
 {
+    struct AHISampleInfo si;
+
     if (width != 2)
-        return -1;                       /* AHI path assumes 16-bit        */
-    g_type    = (channels >= 2) ? AHIST_S16S : AHIST_M16S;
-    g_rate    = (unsigned long)rate;
-    g_fill    = 0;
-    g_fillpos = 0;
-    g_primed  = 0;
-    g_queued[0] = g_queued[1] = 0;
+        return -1;
+    g_type = (channels >= 2) ? AHIST_S16S : AHIST_M16S;
+    g_rate = (unsigned long)rate;
+    g_buf_size = BUF_BYTES;
+    /* Skip a small silence pre-roll at the start of the buffer (the
+     * MEMF_CLEAR-filled bytes are already zero) so AHI's startup
+     * transient lands on silence — same trick v1 used, but the silence
+     * comes for free instead of being explicitly written. */
+    g_write_pos    = ((long)g_rate >> 4) * 2;
+    g_play_started = 0;
+    g_loaded       = 0;
+    g_alloced      = 0;
+    g_opened       = 0;
 
     g_port = CreateMsgPort();
     if (!g_port) return -1;
 
-    g_req[0] = (struct AHIRequest *)CreateIORequest(g_port, sizeof(struct AHIRequest));
-    if (!g_req[0]) return -1;
-    g_req[0]->ahir_Version = 4;          /* AHI v4 minimum                 */
+    g_req = (struct AHIRequest *)CreateIORequest(g_port, sizeof(struct AHIRequest));
+    if (!g_req) return -1;
+    g_req->ahir_Version = 4;
 
-    if (OpenDevice((STRPTR)AHINAME, (ULONG)g_unit,
-                   (struct IORequest *)g_req[0], 0) != 0) {
-        fprintf(stderr, "OpenDevice ahi.device unit %ld failed\n", (long)g_unit);
+    if (OpenDevice((STRPTR)"ahi.device", AHI_NO_UNIT,
+                   (struct IORequest *)g_req, 0) != 0) {
+        fprintf(stderr, "OpenDevice ahi.device AHI_NO_UNIT failed\n");
         return -1;
     }
     g_opened = 1;
+    AHIBase = (struct Library *)g_req->ahir_Std.io_Device;
 
-    /* Second request is a clone sharing the same reply port + device. */
-    g_req[1] = (struct AHIRequest *)AllocMem(sizeof(struct AHIRequest),
-                                             MEMF_PUBLIC | MEMF_CLEAR);
-    if (!g_req[1]) return -1;
-    CopyMem(g_req[0], g_req[1], sizeof(struct AHIRequest));
-    g_haveReq1 = 1;
+    g_ctrl = AHI_AllocAudio(
+        AHIA_AudioID,  g_mode_id,
+        AHIA_MixFreq,  g_rate,
+        AHIA_Channels, 1UL,
+        AHIA_Sounds,   1UL,
+        TAG_END);
+    if (!g_ctrl) {
+        fprintf(stderr, "AHI_AllocAudio failed (mode 0x%08lx)\n", g_mode_id);
+        return -1;
+    }
+    g_alloced = 1;
 
-    g_buf[0] = (unsigned char *)AllocMem(BUFSIZE, MEMF_PUBLIC);
-    g_buf[1] = (unsigned char *)AllocMem(BUFSIZE, MEMF_PUBLIC);
-    if (!g_buf[0] || !g_buf[1]) return -1;
-
-    /* Silence pre-roll (~64ms): absorbs the cold-start DAC transient so the
-     * utterance's onset isn't clipped. See nw_engine.c for the rationale. */
-    audio_write(NULL, ((long)g_rate >> 4) * 2);
-
+    g_buf = (unsigned char *)AllocMem(g_buf_size, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!g_buf) {
+        fprintf(stderr, "AllocMem %ld failed\n", g_buf_size);
+        return -1;
+    }
+    /* Register the silence-filled buffer with AHI. We register the WHOLE
+     * buffer; bytes past the eventual end-of-audio are silence and AHI
+     * plays them as silence until audio_close stops the mixer.
+     *
+     * ahisi_Length is in SAMPLES, not bytes — devices/ahi.h:
+     *   ULONG ahisi_Length;   / Number of samples in array /
+     * Passing bytes here makes AHI think the sample is 2x as long, which
+     * yields subtle but audible periodic clicks on speech content (sine
+     * is forgiving and masks the artefact). For M16S, 1 sample = 2 bytes. */
+    si.ahisi_Type    = g_type;
+    si.ahisi_Address = g_buf;
+    si.ahisi_Length  = g_buf_size >> 1;
+    if (AHI_LoadSound(0, AHIST_DYNAMICSAMPLE, &si, g_ctrl) != 0) {
+        fprintf(stderr, "AHI_LoadSound DYNAMICSAMPLE failed\n");
+        return -1;
+    }
+    g_loaded = 1;
     return 0;
 }
 
-/* data == NULL feeds `len` bytes of silence (used for the start-up pre-roll). */
+/* data == NULL feeds `len` bytes of silence (no-op since the buffer is
+ * already zero, but advance write_pos so the silence is "accounted for"
+ * in the duration math at audio_close). */
 long audio_write(const void *data, long len)
 {
-    const unsigned char *p = (const unsigned char *)data;
-    long left = len;
+    if (len <= 0) return 0;
+    if (g_write_pos + len > g_buf_size) {
+        /* Buffer full — caller has given us more audio than we can hold.
+         * Truncate to what fits and return that, then refuse subsequent
+         * writes. */
+        len = g_buf_size - g_write_pos;
+        if (len <= 0) return -1;
+    }
+    if (data) {
+        copy_swap16(g_buf + g_write_pos, (const unsigned char *)data, len);
+    }
+    /* else: buffer is MEMF_CLEAR-zero, no need to memset                 */
+    g_write_pos += len;
 
-    while (left > 0) {
-        long space = BUFSIZE - g_fillpos;
-        long take  = left < space ? left : space;
-        if (p) { memcpy(g_buf[g_fill] + g_fillpos, p, (size_t)take); p += take; }
-        else   { memset(g_buf[g_fill] + g_fillpos, 0, (size_t)take); }  /* silence */
-        g_fillpos += take;
-        left      -= take;
-
-        if (g_fillpos == BUFSIZE) {
-            if (!g_primed) {
-                /* Prime: hold buffer 0 until buffer 1 is also full, then
-                 * submit BOTH back-to-back (0 unlinked, 1 linked onto 0) so
-                 * AHI always has the next buffer queued before the current
-                 * one drains. Submitting buffer 0 alone and only filling 1
-                 * afterwards races the network and underruns mid-word. */
-                if (g_fill == 0) {
-                    g_fill = 1; g_fillpos = 0;        /* hold 0, fill 1     */
-                } else {
-                    submit(0, BUFSIZE);               /* link NULL          */
-                    submit(1, BUFSIZE);               /* linked onto 0      */
-                    g_primed = 1;
-                    g_fill = 0;
-                    wait_free(0);                     /* reclaim 0 to refill*/
-                    g_fillpos = 0;
-                }
-            } else {
-                int other = 1 - g_fill;
-                submit(g_fill, BUFSIZE); /* play it, linked to the other   */
-                wait_free(other);        /* reclaim the other to refill     */
-                g_fill    = other;
-                g_fillpos = 0;
-            }
-        }
+    /* Kick off playback once we've buffered enough head start. Subsequent
+     * writes just advance the head; AHI follows. */
+    if (!g_play_started && g_loaded && g_write_pos >= PLAY_HEADSTART_BYTES) {
+        start_play();
     }
     return len;
 }
 
+static void start_play(void)
+{
+    if (g_play_started || !g_loaded) return;
+    if (AHI_ControlAudio(g_ctrl, AHIC_Play, TRUE, TAG_END) != 0) return;
+    AHI_Play(g_ctrl,
+             AHIP_BeginChannel, 0UL,
+             AHIP_Freq,         g_rate,
+             AHIP_Vol,          0x10000UL,
+             AHIP_Pan,          0x8000UL,
+             AHIP_Sound,        0UL,
+             AHIP_EndChannel,   0UL,
+             TAG_END);
+    g_play_started = 1;
+}
+
 void audio_close(void)
 {
-    if (g_opened) {
-        /* Small silence post-roll so the channel-stop click lands on silence
-         * (see nw_engine.c). ~64ms. */
-        audio_write(NULL, ((long)g_rate >> 4) * 2);
-        if (!g_primed) {
-            /* Never reached the prime point: flush whatever is held. If a
-             * full buffer 0 is being held (g_fill == 1), submit it first,
-             * then the partial buffer 1 linked onto it. */
-            if (g_fill == 1) {
-                submit(0, BUFSIZE);                  /* held full buf, link NULL */
-                if (g_fillpos > 0) submit(1, g_fillpos);
-            } else if (g_fillpos > 0) {
-                submit(0, g_fillpos);                /* only a partial buf 0 */
-            }
-        } else if (g_fillpos > 0) {
-            submit(g_fill, g_fillpos);   /* flush the partial tail buffer  */
-        }
-        wait_free(0);
-        wait_free(1);
+    /* Very short utterance — audio_close hit before headstart threshold;
+     * kick off playback now with whatever we've got. */
+    if (!g_play_started && g_loaded && g_write_pos > 0) {
+        start_play();
+    }
+    if (g_play_started && g_write_pos > 0) {
+        long duration_ticks;
+
+        /* Wait for AHI to play out g_write_pos bytes' worth of audio.
+         * Over-estimates by however long audio_write was active (because
+         * playback was concurrent), but a safe upper bound — playback
+         * has definitely finished by then. Tuning this would require
+         * tracking AHI_Play wall time via timer.device; not worth the
+         * complexity for first cut. */
+        duration_ticks = (long)(((g_write_pos / 2L) * 50UL) / g_rate) + 5;
+        Delay(duration_ticks);
+        AHI_ControlAudio(g_ctrl, AHIC_Play, FALSE, TAG_END);
     }
 
-    if (g_buf[0]) { FreeMem(g_buf[0], BUFSIZE); g_buf[0] = NULL; }
-    if (g_buf[1]) { FreeMem(g_buf[1], BUFSIZE); g_buf[1] = NULL; }
-    if (g_haveReq1 && g_req[1]) { FreeMem(g_req[1], sizeof(struct AHIRequest)); g_req[1] = NULL; }
-    if (g_opened)  { CloseDevice((struct IORequest *)g_req[0]); g_opened = 0; }
-    if (g_req[0])  { DeleteIORequest((struct IORequest *)g_req[0]); g_req[0] = NULL; }
+    if (g_loaded)  { AHI_UnloadSound(0, g_ctrl); g_loaded = 0; }
+    if (g_alloced) { AHI_FreeAudio(g_ctrl); g_alloced = 0; g_ctrl = NULL; }
+    if (g_buf)     { FreeMem(g_buf, g_buf_size); g_buf = NULL; }
+    if (g_opened)  { CloseDevice((struct IORequest *)g_req); g_opened = 0; }
+    if (g_req)     { DeleteIORequest((struct IORequest *)g_req); g_req = NULL; }
     if (g_port)    { DeleteMsgPort(g_port); g_port = NULL; }
 }
 
