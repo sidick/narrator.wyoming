@@ -20,11 +20,15 @@
 #
 #   copperline-smoke : the first actual on-target CI coverage this repo has
 #                had. Runs in ghcr.io/sidick/amiga-dev:1 (the same Bebbo
-#                toolchain as amiga-dist, plus Copperline + its lavapipe
-#                Vulkan dependency preinstalled), so this job both
-#                cross-compiles wyomingtest and runs it under Copperline
-#                (bundled AROS ROM, no licensed Kickstart needed) in one
-#                container. Reaches the same mock Wyoming server host-build
+#                toolchain as amiga-dist, plus the runtime libs -- lavapipe
+#                Vulkan, ALSA -- Copperline needs); the Copperline binary
+#                itself is downloaded fresh each run as the upstream
+#                AppImage, pinned by version (COPPERLINE_VERSION), extracted
+#                with --appimage-extract (no FUSE needed) rather than using
+#                whatever Copperline happens to be baked into the container
+#                image. This job cross-compiles wyomingtest and runs it
+#                under Copperline (bundled AROS ROM, no licensed Kickstart
+#                needed). Reaches the same mock Wyoming server host-build
 #                uses over Copperline's [hostsocket] board (net = "host"),
 #                and byte-compares the PCM it writes against
 #                tests/golden/wyomingtest.pcm -- the same fixture host-build
@@ -146,21 +150,68 @@ jobs:
   copperline-smoke:
     name: On-target smoke test (Copperline)
     runs-on: ubuntu-latest
-    # Shared toolchain + test-harness image (sidick/amiga-dev): the same
-    # Bebbo m68k-amigaos-gcc 6.5.0b (amiga6 branch) this project already
-    # targets, plus Copperline and its lavapipe Vulkan dependency
-    # preinstalled -- so this job can cross-compile wyomingtest and run
-    # Copperline in the same container, no separate install steps and no
-    # artifact hand-off from amiga-dist needed.
+    # sidick/amiga-dev supplies the toolchain (Bebbo m68k-amigaos-gcc
+    # 6.5.0b, amiga6 branch) plus the runtime shared libs Copperline needs
+    # (lavapipe Vulkan, ALSA, ...). The Copperline *binary* itself no
+    # longer comes from this image -- it's downloaded fresh below, pinned
+    # to an upstream release tag, so the emulator version this job runs is
+    # controlled independently of whenever the container image was last
+    # rebuilt (see the Aug 2026 incident below the digest pin).
     #
     # Pinned by digest (same policy as amiga-dist's compiler image): the
     # mutable :1 tag silently swapped NDKs under us once (its new
     # inline/bsdsocket.h broke the SocketBaseTags vararg macro) -- resolve
     # the digest of :1 and update here deliberately when upgrading.
-    # This digest = the :1 of 2026-08-25 (Copperline 0.16.0).
     container: ghcr.io/sidick/amiga-dev@sha256:a49b86f7386314afd7a81a792579c05a98f7d2076e06f113db15aab8bf0fdec7
+    env:
+      # Pin to an upstream Copperline release tag (verified locally against
+      # this project's tests/run_nondist.sh before bumping -- see CLAUDE.md).
+      COPPERLINE_VERSION: "0.18.0"
     steps:
       - uses: actions/checkout@v7
+
+      # Cache the downloaded AppImage by version -- immutable once a
+      # release is published, so a cache hit skips the ~45 MB download
+      # entirely.
+      - name: Cache Copperline AppImage
+        id: copperline-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/copperline.AppImage
+          key: copperline-appimage-${{ env.COPPERLINE_VERSION }}
+
+      - name: Download Copperline AppImage
+        if: steps.copperline-cache.outputs.cache-hit != 'true'
+        run: |
+          url="https://github.com/CopperlineHQ/Copperline/releases/download/v${COPPERLINE_VERSION}/Copperline-${COPPERLINE_VERSION}-x86_64.AppImage"
+          if command -v curl >/dev/null 2>&1; then
+            curl -fsSL -o /tmp/copperline.AppImage "$url"
+          else
+            wget -q -O /tmp/copperline.AppImage "$url"
+          fi
+
+      # Extract rather than run the AppImage directly: --appimage-extract
+      # unsquashes it without needing FUSE/libfuse2, which this container
+      # doesn't have installed. squashfs-root/AppRun is the real binary;
+      # symlink it into a PATH directory as `copperline` so
+      # tests/run_smoke.sh's `command -v copperline` check keeps working
+      # unmodified.
+      - name: Extract Copperline AppImage
+        run: |
+          chmod +x /tmp/copperline.AppImage
+          cd /tmp && /tmp/copperline.AppImage --appimage-extract
+          mkdir -p "$HOME/.local/bin"
+          ln -sf /tmp/squashfs-root/AppRun "$HOME/.local/bin/copperline"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify downloaded Copperline version
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          got=$(copperline --version | tee /dev/stderr)
+          case "$got" in
+            *"$COPPERLINE_VERSION"*) ;;
+            *) echo "expected Copperline $COPPERLINE_VERSION, got: $got" >&2; exit 1 ;;
+          esac
 
       - name: Cross-compile wyomingtest
         run: make build/amiga/wyomingtest
