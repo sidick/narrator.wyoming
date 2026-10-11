@@ -226,7 +226,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.14'
+          python-version: '3.15'
 
       # Cache the pip wheel for semgrep so subsequent runs skip the ~10 MB
       # download. Keyed on this workflow file's hash so any change to how
